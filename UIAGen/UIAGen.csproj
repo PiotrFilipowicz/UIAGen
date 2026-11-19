@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>disable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Platforms>x64</Platforms>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<DefineConstants>$(DefineConstants);UIA_ADAPTER_TEMPLATE</DefineConstants>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="Templates\*.cs" LogicalName="UiaAdapter.Templates.%(Filename)%(Extension)" />
+		<EmbeddedResource Include="Runtimes\*.cs" LogicalName="UiaAdapter.Runtimes.%(Filename)%(Extension)" />
+	</ItemGroup>
+	<!--
+	  <Target Name="RunUiaAdapterAfterBuild" AfterTargets="Build" Condition="'$(SkipUiaAdapterGeneration)' != 'true' and Exists('$(TargetDir)$(AssemblyName).exe')">
+		<Message Text="Uruchamianie generatora po kompilacji: $(TargetDir)$(AssemblyName).exe" Importance="high" />
+		<Exec Command="&quot;$(TargetDir)$(AssemblyName).exe&quot;" />
+	  </Target>
+	-->
+	<!-- Bezpieczne i szybkie odtwarzanie struktury assets tylko w razie potrzeby -->
+	<Target Name="EnsureRestoreCheck" BeforeTargets="PrepareForBuild" Condition="!Exists('$(MSBuildProjectExtensionsPath)project.assets.json')">
+		<Message Text="Brak pliku assets.json - automatyczne przywracanie metadanych..." Importance="high" />
+		<Exec Command="dotnet restore &quot;$(MSBuildProjectFullPath)&quot;" />
+	</Target>
+
+</Project>

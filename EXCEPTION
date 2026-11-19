@@ -1,0 +1,37 @@
+CODE GENERATION EXCEPTION TO GNU LGPL V3
+Version 1.0, 2026
+
+Copyright (c) 2026 Piotr Filipowicz
+
+As a special exception to the GNU Lesser General Public License version 3
+("LGPLv3"), if you use UiaImp.exe (the "Program") to generate source code,
+metadata, or stub files (collectively, "Generated Output"), you may use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell the
+Generated Output under any license terms of your choice, without being
+required to comply with the copyleft obligations of the LGPLv3 or GPLv3
+with respect to that Generated Output.
+
+1. Scope of Exception:
+   This exception applies solely to the Generated Output produced by the
+   Program, even if such Generated Output incorporates boilerplate code,
+   templates, or structural definitions originating from the Program.
+
+2. Excluded Works:
+   This exception does NOT apply to the source code or binaries of the
+   Program itself, nor to any runtime libraries distributed with the
+   Program unless explicitly licensed otherwise. Any modification or
+   redistribution of the Program itself remains strictly governed by the
+   terms of the LGPLv3.
+
+3. Disclaimer of Warranty:
+   THE GENERATED OUTPUT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   GENERATED OUTPUT.
+
+If you modify the Program, you may extend this exception to your version
+of the Program, but you are not obligated to do so. If you do not wish to
+do so, delete this exception statement from your version.

@@ -1,0 +1,48 @@
+<svg xmlns="http://w3.org" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- Tło w głębokim odcieniu .NET / nowoczesnego ciemnego motywu -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E1B4B" />
+      <stop offset="100%" stop-color="#4C1D95" />
+    </linearGradient>
+
+    <!-- Gradient dla prawego ramienia (błękitny akcent) -->
+    <linearGradient id="rightArmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#6366F1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Zaokrąglony kwadrat tła -->
+  <rect x="16" y="16" width="224" height="224" rx="48" fill="url(#bgGrad)" />
+
+  <!-- Subtelna ramka wewnętrzna -->
+  <rect x="24" y="24" width="208" height="208" rx="40" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.1" />
+
+  <!-- Lewa i dolna część litery U (solidna, biała, geometryczna) -->
+  <path d="M 72 68 
+           H 106 
+           V 142 
+           C 106 154 114 162 126 162 
+           H 142 
+           V 194 
+           H 118 
+           C 90 194 72 176 72 146 
+           Z" 
+        fill="#FFFFFF" />
+
+  <!-- Prawa część litery U (błękitny blok symbolizujący wygenerowany adapter / moduł) -->
+  <path d="M 150 68 
+           H 184 
+           V 146 
+           C 184 176 166 194 138 194 
+           H 130 
+           V 162 
+           H 134 
+           C 144 162 150 154 150 142 
+           Z" 
+        fill="url(#rightArmGrad)" />
+
+  <!-- Drobne wycięcie / szczelina techniczna między elementami podkreślająca budowę modułową -->
+  <rect x="132" y="160" width="6" height="36" fill="#311068" />
+</svg>

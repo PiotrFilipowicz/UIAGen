@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "UIAGen": {
+      "commandName": "Project",
+      "commandLineArgs": "-mso MSOfficeUIA MSOfficeAdapter"
+    }
+  }
+}
