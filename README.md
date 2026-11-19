@@ -61,5 +61,5 @@ app.Quit(WdSaveOptions.wdDoNotSaveChanges);
 
 ## License
 
-- **Generator (`UIAGen`):** GNU Lesser General Public License v3. See [LICENSE](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/LICENSE) and [LICENSE.GPL](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/LICENSE.GPL).
-- **Generated output:** The [Code Generation Exception](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/EXCEPTION) permits distribution of the generated output under terms of your choice, subject to the exception's scope. It does not relicense the generator itself.
+- **Generator (`UIAGen`):** GNU Lesser General Public License v3. See [LICENSE](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/LICENSE) and [LICENSE.GPL](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/LICENSE.GPL).
+- **Generated output:** The [Code Generation Exception](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/EXCEPTION) permits distribution of the generated output under terms of your choice, subject to the exception's scope. It does not relicense the generator itself.
