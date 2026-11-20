@@ -170,6 +170,11 @@ namespace {{targetNamespace}};
         DiscoveredObjectsMembers.Add("MiddleItem");
         DiscoveredObjectsMembers.Add("PreviousItem");
         DiscoveredObjectsMembers.Add("NextItem");
+       
+        DiscoveredObjectsMembers.Add("AnyItem");
+        DiscoveredObjectsMembers.Add("ItemByID");
+        DiscoveredObjectsMembers.Add("ItemByRange");
+        DiscoveredObjectsMembers.Add("Remove");
     }
 
     private static bool IsAdobeObjectsTypeInfo(ITypeInfo typeInfo, TYPEATTR attr) {

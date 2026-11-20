@@ -21,14 +21,14 @@ public partial class UiaAdapterWrapper {
     private const string TemplateResourcePrefix = "UiaAdapter.Templates.";
     private const string SafeDebuggerMethodsMarker = "        // __UIA_SAFE_DEBUGGER_METHODS__";
     private static readonly string[] SafeDebuggerMethodNames = [
-        "Remove",
-        "ItemByID",
-        "ItemByRange",
         "FirstItem",
         "LastItem",
         "MiddleItem",
         "PreviousItem",
         "NextItem",
+
+        "ItemByID",
+        "ItemByRange",
         "AnyItem"
     ];
 

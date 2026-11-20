@@ -649,7 +649,7 @@ internal static class ProgramHelpers {
             		<IsAotCompatible>true</IsAotCompatible>
             		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
             		<EnableAotAnalyzer>true</EnableAotAnalyzer>
-            		<DebugType>none</DebugType>
+            		<DebugType>full</DebugType>
             	</PropertyGroup>
             </Project>
             

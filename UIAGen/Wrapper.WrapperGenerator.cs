@@ -142,6 +142,12 @@ public class {{safeTypeName}}{{inheritance}} {
             emittedMemberNames.Add("MiddleItem");
             emittedMemberNames.Add("PreviousItem");
             emittedMemberNames.Add("NextItem");
+
+            emittedMemberNames.Add("AnyItem");
+            emittedMemberNames.Add("ItemByID");
+            emittedMemberNames.Add("ItemByRange");
+            emittedMemberNames.Add("Remove");
+
         }
 
         bool IsSafeDebuggerMethod(string name) =>
