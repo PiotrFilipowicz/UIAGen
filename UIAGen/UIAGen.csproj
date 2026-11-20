@@ -7,9 +7,28 @@
 		<Platforms>x64</Platforms>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<DefineConstants>$(DefineConstants);UIA_ADAPTER_TEMPLATE</DefineConstants>
+		<ApplicationIcon>..\Assets\icon.ico</ApplicationIcon>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<PackAsTool>true</PackAsTool>
+		<ToolCommandName>uiagen</ToolCommandName>
+		<PackageId>UIAGen</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>Piotr Filipowicz</Authors>
+		<Description>Build-time code generator that turns Windows COM Type Libraries (TLB/DLL/EXE/ProgID) into statically typed, Native AOT-compatible C# adapters for .NET 10.</Description>
+		<PackageTags>com;interop;typelib;tlbimp;native-aot;aot;csharp;dotnet;autocad;office;indesign</PackageTags>
+		<PackageProjectUrl>https://github.com/PiotrFilipowicz/UIAGen</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/PiotrFilipowicz/UIAGen</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageIcon>icon.png</PackageIcon>
 	</PropertyGroup>
 
 	<ItemGroup>
+		<None Include="..\README.md" Pack="true" PackagePath="\" />
+		<None Include="..\Assets\icon.png" Pack="true" PackagePath="\" />
 		<EmbeddedResource Include="Templates\*.cs" LogicalName="UiaAdapter.Templates.%(Filename)%(Extension)" />
 		<EmbeddedResource Include="Runtimes\*.cs" LogicalName="UiaAdapter.Runtimes.%(Filename)%(Extension)" />
 	</ItemGroup>
@@ -19,6 +38,20 @@
 		<Exec Command="&quot;$(TargetDir)$(AssemblyName).exe&quot;" />
 	  </Target>
 	-->
+	<Target Name="ZipPublishOutput" AfterTargets="Publish">
+		<PropertyGroup>
+			<ReleaseZipDir>$(MSBuildProjectDirectory)\..\Releases</ReleaseZipDir>
+			<ReleaseZipFile>$(ReleaseZipDir)\UIAGen-v$(Version)-win-x64.zip</ReleaseZipFile>
+		</PropertyGroup>
+
+		<MakeDir Directories="$(ReleaseZipDir)" />
+		<Delete Files="$(ReleaseZipFile)" Condition="Exists('$(ReleaseZipFile)')" />
+		<Copy SourceFiles="$(MSBuildProjectDirectory)\..\README.md;$(MSBuildProjectDirectory)\..\LICENSE;$(MSBuildProjectDirectory)\..\EXCEPTION"
+			  DestinationFolder="$(PublishDir)"
+			  SkipUnchangedFiles="true" />
+		<ZipDirectory SourceDirectory="$(PublishDir)" DestinationFile="$(ReleaseZipFile)" Overwrite="true" />
+		<Message Text="Created release archive: $(ReleaseZipFile)" Importance="high" />
+	</Target>
 	<!-- Bezpieczne i szybkie odtwarzanie struktury assets tylko w razie potrzeby -->
 	<Target Name="EnsureRestoreCheck" BeforeTargets="PrepareForBuild" Condition="!Exists('$(MSBuildProjectExtensionsPath)project.assets.json')">
 		<Message Text="Brak pliku assets.json - automatyczne przywracanie metadanych..." Importance="high" />

@@ -13,6 +13,7 @@
 using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -23,105 +24,179 @@ namespace UiaAdapter;
 
 internal static class ProgramHelpers {
 
-    internal static bool GenerateAllAdapters(string outputFolder, string? combinedAdapterName = null) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
-        string fullOutputFolder = Path.GetFullPath(outputFolder);
-        Directory.CreateDirectory(fullOutputFolder);
+    private sealed record DiscoveredServerEntry(
+        Guid TypeLibGuid,
+        string ProgId,
+        ITypeLib TypeLib,
+        string TlbFilePath,
+        string RegistryLocation,
+        string? ServerFilePath);
+
+    internal static bool GenerateAllAdapters(
+        string? outputFolder,
+        string? combinedAdapterName = null,
+        IReadOnlyList<string>? folderFilters = null,
+        bool listOnly = false,
+        bool compile = false) {
+
+        if (!listOnly)
+            ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
+
+        string? fullOutputFolder = string.IsNullOrWhiteSpace(outputFolder) ? null : Path.GetFullPath(outputFolder);
+        string[] normalizedFilters = NormalizeFolderFilters(folderFilters);
+        bool hasFilter = normalizedFilters.Length > 0;
+        Func<string, bool>? pathFilter = hasFilter
+            ? path => MatchesFolderFilter(path, normalizedFilters)
+            : null;
+        Action<string>? reportSkip = (!hasFilter && !listOnly) ? Console.Error.WriteLine : null;
+
+        if (hasFilter) {
+            Console.WriteLine($"Filtering registered COM servers to {normalizedFilters.Length} folder(s):");
+            foreach (string filter in normalizedFilters)
+                Console.WriteLine($"  - {filter}");
+        }
 
         Console.WriteLine("Scanning the HKCR registry: ProgID, TypeLib, and Interface (32-bit and 64-bit views)...");
         string[] allProgIds = CollectRegisteredProgIds();
+
         Console.WriteLine($"Found {allProgIds.Length} ProgIDs with associated CLSIDs. Resolving type libraries...");
 
-        var uniqueLibs = new Dictionary<Guid, (string ProgId, ITypeLib TypeLib)>();
+        var uniqueLibs = new Dictionary<Guid, DiscoveredServerEntry>();
         int progIdsWithTypeLib = 0;
 
         foreach (string progId in allProgIds) {
             try {
-                ITypeLib? lib = TlbResolver.Finder.TypeLibFromProgId(progId);
-                if (lib == null)
+                if (!TlbResolver.Finder.TryResolveFromProgId(progId, out ResolvedTypeLibInfo resolved, pathFilter, reportSkip))
                     continue;
 
                 progIdsWithTypeLib++;
-                TYPELIBATTR attr = TypeInfoDescriptor.LibraryAttributes(lib);
+                TYPELIBATTR attr = TypeInfoDescriptor.LibraryAttributes(resolved.TypeLib);
                 if (attr.guid == Guid.Empty)
                     continue;
 
                 if (!uniqueLibs.TryGetValue(attr.guid, out var existing)) {
-                    uniqueLibs[attr.guid] = (progId, lib);
+                    uniqueLibs[attr.guid] = new DiscoveredServerEntry(
+                        attr.guid,
+                        progId,
+                        resolved.TypeLib,
+                        resolved.FilePath,
+                        resolved.RegistryLocation,
+                        resolved.ServerFilePath);
                 }
                 else if (IsBetterRepresentative(progId, existing.ProgId)) {
-                    uniqueLibs[attr.guid] = (progId, lib);
+                    uniqueLibs[attr.guid] = new DiscoveredServerEntry(
+                        attr.guid,
+                        progId,
+                        resolved.TypeLib,
+                        resolved.FilePath,
+                        resolved.RegistryLocation,
+                        resolved.ServerFilePath ?? existing.ServerFilePath);
+                }
+                else if (existing.ServerFilePath == null && resolved.ServerFilePath != null) {
+                    uniqueLibs[attr.guid] = existing with { ServerFilePath = resolved.ServerFilePath };
                 }
             }
             catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException or System.Security.SecurityException) {
-                Console.Error.WriteLine($"  [SKIP] ProgID {progId}: {exception.Message}");
+                reportSkip?.Invoke($"  [SKIP] ProgID {progId}: {exception.Message}");
             }
         }
 
         Console.WriteLine($"Resolved {progIdsWithTypeLib} ProgIDs to {uniqueLibs.Count} unique type libraries.");
-        IReadOnlyList<RegisteredTypeLib> registrations = RegistryTypeLibScanner.Collect(Console.Error.WriteLine);
+        IReadOnlyList<RegisteredTypeLib> registrations = RegistryTypeLibScanner.Collect(message => reportSkip?.Invoke(message));
         int additionalLibraries = 0;
         foreach (RegisteredTypeLib registration in registrations) {
             if (uniqueLibs.ContainsKey(registration.Guid))
                 continue;
             try {
-                ITypeLib? library = TlbResolver.TypeLib.GetFromGuid(registration.Guid, registration.Version);
-                if (library == null) {
-                    Console.Error.WriteLine($"  [SKIP] {registration.Source}, version {registration.Version}: could not load type library {registration.Guid:B}.");
+                if (!TlbResolver.TypeLib.TryResolveFromGuid(registration.Guid, registration.Version, out ResolvedTypeLibInfo resolved, pathFilter, reportSkip)) {
+                    reportSkip?.Invoke($"  [SKIP] {registration.Source}, version {registration.Version}: could not load type library {registration.Guid:B}.");
                     continue;
                 }
-                TYPELIBATTR attr = TypeInfoDescriptor.LibraryAttributes(library);
+                TYPELIBATTR attr = TypeInfoDescriptor.LibraryAttributes(resolved.TypeLib);
                 if (attr.guid != registration.Guid) {
-                    Console.Error.WriteLine($"  [SKIP] {registration.Source}: the file contains a different type library GUID ({attr.guid:B}).");
+                    reportSkip?.Invoke($"  [SKIP] {registration.Source}: the file contains a different type library GUID ({attr.guid:B}).");
                     continue;
                 }
-                if (uniqueLibs.TryAdd(attr.guid, (registration.Source, library)))
+                string combinedLocation = $"{registration.Source} -> {resolved.RegistryLocation}";
+                if (uniqueLibs.TryAdd(attr.guid, new DiscoveredServerEntry(
+                    attr.guid,
+                    registration.Source,
+                    resolved.TypeLib,
+                    resolved.FilePath,
+                    combinedLocation,
+                    resolved.ServerFilePath))) {
                     additionalLibraries++;
+                }
             }
             catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException or IOException or UnauthorizedAccessException or System.Security.SecurityException) {
-                Console.Error.WriteLine($"  [SKIP] {registration.Source}: {exception.Message}");
+                reportSkip?.Invoke($"  [SKIP] {registration.Source}: {exception.Message}");
             }
         }
-        Console.WriteLine($"TypeLib/Interface: {registrations.Count} registrations, {additionalLibraries} libraries added. Total: {uniqueLibs.Count}.");
-        if (uniqueLibs.Count == 0)
-            return false;
+        Console.WriteLine($"TypeLib/Interface: {registrations.Count} registrations, {additionalLibraries} libraries added. Total matched: {uniqueLibs.Count}.");
+        Console.WriteLine();
 
-        if (!string.IsNullOrWhiteSpace(combinedAdapterName)) {
-            return GenerateAdapter(uniqueLibs.Values.ToArray(), fullOutputFolder, combinedAdapterName);
+        List<DiscoveredServerEntry> filteredEntries = uniqueLibs.Values
+            .Where(entry => MatchesFolderFilter(entry.TlbFilePath, normalizedFilters) ||
+                            (!string.IsNullOrEmpty(entry.ServerFilePath) && MatchesFolderFilter(entry.ServerFilePath, normalizedFilters)))
+            .ToList();
+
+        if (filteredEntries.Count == 0) {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("No registered COM type libraries matched the specified criteria.");
+            Console.ResetColor();
+            return listOnly;
         }
 
         var usedAdapterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        int succeeded = 0;
-        var failures = new List<(string ProgId, string AdapterName, string Error)>();
+        var plannedAdapters = new List<(string AdapterName, DiscoveredServerEntry Entry)>(filteredEntries.Count);
 
-        foreach (var (_, (progId, lib)) in uniqueLibs) {
-            string baseAdapterName = ResolveDefaultAdapterName(lib, progId);
+        foreach (DiscoveredServerEntry entry in filteredEntries.OrderBy(e => ResolveDefaultAdapterName(e.TypeLib, e.ProgId), StringComparer.OrdinalIgnoreCase)) {
+            string baseAdapterName = ResolveDefaultAdapterName(entry.TypeLib, entry.ProgId);
             string adapterName = baseAdapterName;
             int suffix = 2;
             while (!usedAdapterNames.Add(adapterName)) {
                 adapterName = $"{baseAdapterName}_{suffix++}";
             }
+            plannedAdapters.Add((adapterName, entry));
+        }
 
-            string adapterFolder = Path.Combine(fullOutputFolder, adapterName);
+        if (listOnly) {
+            PrintDiscoveredServersList(plannedAdapters);
+            return true;
+        }
+
+        Directory.CreateDirectory(fullOutputFolder!);
+
+        if (!string.IsNullOrWhiteSpace(combinedAdapterName)) {
+            var primaryLibs = plannedAdapters
+                .Select(item => (item.Entry.ProgId, item.Entry.TypeLib))
+                .ToArray();
+            return GenerateAdapter(primaryLibs, fullOutputFolder!, combinedAdapterName, compile, fullOutputFolder!, listOnly: false);
+        }
+
+        int succeeded = 0;
+        var failures = new List<(string ProgId, string AdapterName, string Error)>();
+
+        foreach (var (adapterName, entry) in plannedAdapters) {
+            string adapterFolder = Path.Combine(fullOutputFolder!, adapterName);
             try {
-                if (GenerateAdapter(new (string ProgId, ITypeLib TypeLib)[] { (progId, lib) }, adapterFolder, adapterName)) {
+                if (GenerateAdapter(new (string ProgId, ITypeLib TypeLib)[] { (entry.ProgId, entry.TypeLib) }, adapterFolder, adapterName, compile, fullOutputFolder!, listOnly: false)) {
                     succeeded++;
                 }
                 else {
-                    failures.Add((progId, adapterName, "GenerateAdapter returned false"));
+                    failures.Add((entry.ProgId, adapterName, "GenerateAdapter returned false"));
                 }
             }
             catch (Exception ex) {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Failed to generate '{adapterName}' ({progId}): {ex.Message}");
+                Console.WriteLine($"Failed to generate '{adapterName}' ({entry.ProgId}): {ex.Message}");
                 Console.ResetColor();
-                failures.Add((progId, adapterName, ex.Message));
+                failures.Add((entry.ProgId, adapterName, ex.Message));
             }
         }
 
-        Console.WriteLine();
         Console.ForegroundColor = failures.Count == 0 ? ConsoleColor.Green : ConsoleColor.Yellow;
-        Console.WriteLine($"--all summary: generated {succeeded}/{uniqueLibs.Count} adapters in '{fullOutputFolder}' (failures: {failures.Count}).");
+        Console.WriteLine($"-all summary: generated {succeeded}/{plannedAdapters.Count} adapters in '{fullOutputFolder}' (failures: {failures.Count}).");
         Console.ResetColor();
 
         foreach (var (progId, adapterName, error) in failures) {
@@ -129,6 +204,85 @@ internal static class ProgramHelpers {
         }
 
         return failures.Count == 0;
+    }
+
+    private static void PrintDiscoveredServersList(IReadOnlyList<(string AdapterName, DiscoveredServerEntry Entry)> plannedAdapters) {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"Discovered COM servers ({plannedAdapters.Count}):");
+        Console.ResetColor();
+        Console.WriteLine(new string('-', 100));
+
+        foreach (var (adapterName, entry) in plannedAdapters) {
+            string serverIdentity = entry.ProgId.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase)
+                ? adapterName
+                : $"{adapterName} ({entry.ProgId})";
+
+            TYPELIBATTR attr = TypeInfoDescriptor.LibraryAttributes(entry.TypeLib);
+            var (description, _, _) = TypeLibDependencyScanner.ResolveTypeLibRegistryDetails(entry.TypeLib, entry.TypeLibGuid, null, attr.wMajorVerNum, attr.wMinorVerNum);
+
+            Console.WriteLine($"Class name  : {serverIdentity}");
+            if (!string.IsNullOrWhiteSpace(description))
+                Console.WriteLine($"Description : {description}");
+            Console.WriteLine($"TLB path    : {entry.TlbFilePath}");
+            if (!string.IsNullOrEmpty(entry.ServerFilePath) &&
+                !string.Equals(entry.ServerFilePath, entry.TlbFilePath, StringComparison.OrdinalIgnoreCase)) {
+                Console.WriteLine($"Server bin  : {entry.ServerFilePath}");
+            }
+            Console.WriteLine($"Registry    : {entry.RegistryLocation}");
+            Console.WriteLine($"GUID        : {entry.TypeLibGuid:B}");
+            Console.WriteLine(new string('-', 100));
+        }
+    }
+
+    private static string[] NormalizeFolderFilters(IReadOnlyList<string>? folderFilters) {
+        if (folderFilters == null || folderFilters.Count == 0)
+            return [];
+
+        var result = new List<string>(folderFilters.Count);
+        foreach (string rawFolder in folderFilters) {
+            if (string.IsNullOrWhiteSpace(rawFolder))
+                continue;
+
+            string expanded = Environment.ExpandEnvironmentVariables(rawFolder.Trim()).Trim('"');
+            string fullPath = Path.GetFullPath(expanded);
+            if (!fullPath.EndsWith(Path.DirectorySeparatorChar) && !fullPath.EndsWith(Path.AltDirectorySeparatorChar)) {
+                fullPath += Path.DirectorySeparatorChar;
+            }
+            result.Add(fullPath);
+        }
+
+        return result.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool MatchesFolderFilter(string tlbFilePath, string[] normalizedFolderFilters) {
+        if (normalizedFolderFilters.Length == 0)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(tlbFilePath))
+            return false;
+
+        string fullFilePath;
+        try {
+            fullFilePath = Path.GetFullPath(tlbFilePath);
+        }
+        catch {
+            return false;
+        }
+
+        string? directory = Path.GetDirectoryName(fullFilePath);
+        if (string.IsNullOrEmpty(directory))
+            return false;
+
+        if (!directory.EndsWith(Path.DirectorySeparatorChar) && !directory.EndsWith(Path.AltDirectorySeparatorChar)) {
+            directory += Path.DirectorySeparatorChar;
+        }
+
+        foreach (string filterDir in normalizedFolderFilters) {
+            if (directory.StartsWith(filterDir, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static string[] CollectRegisteredProgIds() {
@@ -193,8 +347,9 @@ internal static class ProgramHelpers {
             : $"{sanitized}Adapter";
     }
 
-    internal static bool GenerateAdapter(string[] progIds, string outputFolder, string adapterName) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
+    internal static bool GenerateAdapter(string[] progIds, string? outputFolder, string adapterName, bool compile = false, bool listOnly = false) {
+        if (!listOnly)
+            ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         ArgumentNullException.ThrowIfNull(progIds);
         ArgumentException.ThrowIfNullOrWhiteSpace(adapterName);
         if (progIds.Length == 0)
@@ -224,20 +379,67 @@ internal static class ProgramHelpers {
 
         if (primaryLibs.Count == 0 || !allSucceeded)
             return false;
-        return GenerateAdapter(primaryLibs, outputFolder, adapterName) && allSucceeded;
+
+        string? fullOutputFolder = string.IsNullOrWhiteSpace(outputFolder) ? null : Path.GetFullPath(outputFolder);
+        return GenerateAdapter(primaryLibs, fullOutputFolder, adapterName, compile, fullOutputFolder, listOnly) && allSucceeded;
     }
 
-    private static bool GenerateAdapter(IReadOnlyList<(string ProgId, ITypeLib TypeLib)> primaryLibs, string outputFolder, string adapterName) {
+    private static bool GenerateAdapter(
+        IReadOnlyList<(string ProgId, ITypeLib TypeLib)> primaryLibs,
+        string? outputFolder,
+        string adapterName,
+        bool compile = false,
+        string? dllDestinationFolder = null,
+        bool listOnly = false) {
+
+        string rootNamespace = TypeLibDependencyScanner.SanitizeNamespace(adapterName);
+        List<DiscoveredTypeLib> allLibs = TypeLibDependencyScanner.Discover(primaryLibs, rootNamespace);
+
+        string externalPrefix = $"{rootNamespace}.";
+        string[] externalNames = allLibs
+            .Where(lib => lib.Namespace.StartsWith(externalPrefix, StringComparison.Ordinal))
+            .Select(lib => lib.Namespace[externalPrefix.Length..])
+            .ToArray();
+
+        string externalSummary = externalNames.Length > 0
+            ? $"{externalNames.Length} external - {string.Join(", ", externalNames)}"
+            : "0 external";
+
+        Console.WriteLine($"Found {allLibs.Count} type libraries for '{rootNamespace}' ({externalSummary}).");
+
+        if (listOnly) {
+            Console.WriteLine(new string('-', 100));
+            foreach (DiscoveredTypeLib lib in allLibs) {
+                string docName = string.Empty;
+                try {
+                    lib.TypeLib.GetDocumentation(-1, out docName, out _, out _, out _);
+                }
+                catch { }
+
+                Console.WriteLine($"Namespace   : {lib.Namespace}");
+                if (!string.IsNullOrWhiteSpace(lib.Description))
+                    Console.WriteLine($"Description : {lib.Description}");
+                if (!string.IsNullOrWhiteSpace(docName))
+                    Console.WriteLine($"Library     : {docName}");
+                if (!string.IsNullOrWhiteSpace(lib.ProgId))
+                    Console.WriteLine($"ProgId      : {lib.ProgId}");
+                if (!string.IsNullOrWhiteSpace(lib.TlbFilePath))
+                    Console.WriteLine($"TLB path    : {lib.TlbFilePath}");
+                if (!string.IsNullOrWhiteSpace(lib.RegistryLocation))
+                    Console.WriteLine($"Registry    : {lib.RegistryLocation}");
+                Console.WriteLine($"GUID        : {lib.Guid:B}");
+                Console.WriteLine(new string('-', 100));
+            }
+            return true;
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         string fullOutputFolder = Path.GetFullPath(outputFolder);
         Directory.CreateDirectory(fullOutputFolder);
-        string rootNamespace = TypeLibDependencyScanner.SanitizeNamespace(adapterName);
         foreach (string staleFile in Directory.GetFiles(fullOutputFolder, $"Generated.UIA.{rootNamespace}.*.cs")) {
             File.Delete(staleFile);
         }
 
-        List<DiscoveredTypeLib> allLibs = TypeLibDependencyScanner.Discover(primaryLibs, rootNamespace);
-
-        Console.WriteLine($"Found {allLibs.Count} type libraries for '{rootNamespace}' ({allLibs.Count - primaryLibs.Count} external).");
         WriteRuntimeSources(fullOutputFolder);
 
         var builtWrappers = new List<UiaAdapterWrapper>(allLibs.Count);
@@ -273,12 +475,102 @@ internal static class ProgramHelpers {
         Console.WriteLine($"Generating type mappings: {rootNamespace} -> Generated.UIA.{rootNamespace}.TypeMappings.cs");
         StringBuilder typeMappings = UiaAdapterWrapper.BuildSharedTypeMappings(rootNamespace, builtWrappers);
         CreateTemplateFile(typeMappings, fullOutputFolder, rootNamespace, "TypeMappings.cs");
-        CreateProjectFile(fullOutputFolder, $"{Path.GetFileName(fullOutputFolder)}.csproj");
+
+        string projectName = $"{Path.GetFileName(fullOutputFolder)}.csproj";
+        string projectFilePath = CreateProjectFile(fullOutputFolder, projectName);
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"Successfully generated adapter '{rootNamespace}' in: {fullOutputFolder}");
         Console.ResetColor();
+
+        if (compile) {
+            string targetDllFolder = !string.IsNullOrWhiteSpace(dllDestinationFolder)
+                ? Path.GetFullPath(dllDestinationFolder)
+                : fullOutputFolder;
+            if (!CompileProject(projectFilePath, targetDllFolder))
+                return false;
+        }
+        else {
+            Console.WriteLine();
+        }
+
         return true;
+    }
+
+    private static bool CompileProject(string projectFilePath, string destinationFolder) {
+        string projectDir = Path.GetDirectoryName(projectFilePath)
+            ?? throw new InvalidOperationException($"Cannot determine project directory for '{projectFilePath}'.");
+        string assemblyName = Path.GetFileNameWithoutExtension(projectFilePath);
+
+        if (!RunDotnetCommand(projectDir, $"restore \"{projectFilePath}\" /nodeReuse:false", out string restoreOut, out string restoreErr, out int restoreExit)) {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Failed to restore adapter '{assemblyName}' (exit code {restoreExit}):");
+            Console.ResetColor();
+            if (!string.IsNullOrWhiteSpace(restoreOut))
+                Console.Error.WriteLine(restoreOut.TrimEnd());
+            if (!string.IsNullOrWhiteSpace(restoreErr))
+                Console.Error.WriteLine(restoreErr.TrimEnd());
+            Console.WriteLine();
+            return false;
+        }
+
+        if (!RunDotnetCommand(projectDir, $"build \"{projectFilePath}\" -c Release --no-restore -p:UseSharedCompilation=false /nodeReuse:false", out string buildOut, out string buildErr, out int buildExit)) {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Failed to compile adapter '{assemblyName}.dll' (exit code {buildExit}):");
+            Console.ResetColor();
+            if (!string.IsNullOrWhiteSpace(buildOut))
+                Console.Error.WriteLine(buildOut.TrimEnd());
+            if (!string.IsNullOrWhiteSpace(buildErr))
+                Console.Error.WriteLine(buildErr.TrimEnd());
+            Console.WriteLine();
+            return false;
+        }
+
+        string builtDllPath = Path.Combine(projectDir, "bin", "Release", "net10.0", $"{assemblyName}.dll");
+        if (!File.Exists(builtDllPath)) {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Compiled assembly not found at expected path: '{builtDllPath}'.");
+            Console.ResetColor();
+            Console.WriteLine();
+            return false;
+        }
+
+        Directory.CreateDirectory(destinationFolder);
+        string destinationDllPath = Path.Combine(destinationFolder, $"{assemblyName}.dll");
+        File.Copy(builtDllPath, destinationDllPath, overwrite: true);
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"Successfully compiled adapter '{assemblyName}.dll' in: {destinationFolder}");
+        Console.ResetColor();
+        Console.WriteLine();
+        return true;
+    }
+
+    private static bool RunDotnetCommand(string workingDirectory, string arguments, out string stdOut, out string stdErr, out int exitCode) {
+        var startInfo = new ProcessStartInfo {
+            FileName = "dotnet",
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
+
+        using Process? process = Process.Start(startInfo);
+        if (process == null) {
+            stdOut = string.Empty;
+            stdErr = $"Failed to start 'dotnet {arguments}'.";
+            exitCode = -1;
+            return false;
+        }
+
+        stdOut = process.StandardOutput.ReadToEnd();
+        stdErr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        exitCode = process.ExitCode;
+        return exitCode == 0;
     }
 
     static string LicenseHeader(string csFileName) {
@@ -344,14 +636,14 @@ internal static class ProgramHelpers {
         WriteGeneratedStream(reader, $"{outputDirectory}\\{fileName}", LicenseHeader(fileName));
     }
 
-    private static void CreateProjectFile(string outputDirectory, string projectName) {
+    private static string CreateProjectFile(string outputDirectory, string projectName) {
         string project = """
-                <Project Sdk="Microsoft.NET.Sdk">
-                   	<PropertyGroup>
+            <Project Sdk="Microsoft.NET.Sdk">
+            	<PropertyGroup>
             		<TargetFramework>net10.0</TargetFramework>
             		<ImplicitUsings>enable</ImplicitUsings>
             		<Nullable>enable</Nullable>
-            		<Platforms>x64</Platforms>
+            		<PlatformTarget>x64</PlatformTarget>
             		<EnableDefaultCompileItems>true</EnableDefaultCompileItems>
             		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
             		<IsAotCompatible>true</IsAotCompatible>
@@ -359,20 +651,16 @@ internal static class ProgramHelpers {
             		<EnableAotAnalyzer>true</EnableAotAnalyzer>
             		<DebugType>none</DebugType>
             	</PropertyGroup>
-            	<!-- Bezpieczne i szybkie odtwarzanie struktury assets tylko w razie potrzeby -->
-            	<Target Name="EnsureRestoreCheck" BeforeTargets="PrepareForBuild" Condition="!Exists('$(MSBuildProjectExtensionsPath)project.assets.json')">
-            		<Message Text="Brak pliku assets.json - automatyczne przywracanie metadanych..." Importance="high" />
-            		<Exec Command="dotnet restore &quot;$(MSBuildProjectFullPath)&quot;" />
-            	</Target>
             </Project>
             
             """;
         string projectFilePath = Path.Combine(outputDirectory, projectName);
         if (File.Exists(projectFilePath)) {
             Console.WriteLine($"Project file '{projectName}' already exists in '{outputDirectory}'. Skipping creation.");
-            return;
+            return projectFilePath;
         }
         File.WriteAllText(projectFilePath, project);
+        return projectFilePath;
     }
 
     private static void WriteRuntimeSources(string outputDirectory) {

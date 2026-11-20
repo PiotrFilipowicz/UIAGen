@@ -33,6 +33,14 @@ public partial class UiaAdapterWrapper {
                 if (!string.IsNullOrEmpty(name)) {
                     string baseName = GetBaseName(name);
                     if (!KnownEnums.Contains(baseName)) {
+                        if (baseName.Equals("Objects", StringComparison.OrdinalIgnoreCase)) {
+                            using var pObjAttrLease = TypeInfoDescriptor.TypeAttributes(typeInfo);
+                            TYPEATTR objAttr = Marshal.PtrToStructure<TYPEATTR>(pObjAttrLease.Pointer);
+                            if (IsAdobeObjectsTypeInfo(typeInfo, objAttr)) {
+                                HasAdobeObjectsModel = true;
+                            }
+                        }
+
                         if (!uniqueTypeInfos.TryGetValue(baseName, out var existing)) {
                             uniqueTypeInfos[baseName] = typeInfo;
                         }
@@ -160,12 +168,70 @@ namespace {{targetNamespace}};
         DiscoveredObjectsMembers.Add("FirstItem");
         DiscoveredObjectsMembers.Add("LastItem");
         DiscoveredObjectsMembers.Add("MiddleItem");
-        DiscoveredObjectsMembers.Add("AnyItem");
-        DiscoveredObjectsMembers.Add("ItemByID");
-        DiscoveredObjectsMembers.Add("ItemByRange");
-        DiscoveredObjectsMembers.Add("Remove");
         DiscoveredObjectsMembers.Add("PreviousItem");
         DiscoveredObjectsMembers.Add("NextItem");
+    }
+
+    private static bool IsAdobeObjectsTypeInfo(ITypeInfo typeInfo, TYPEATTR attr) {
+        bool hasCount = false;
+        var seenSignatureMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<Guid>();
+
+        void InspectTypeInfo(ITypeInfo currentInfo, TYPEATTR currentAttr, int depth) {
+            if (depth > 4)
+                return;
+            if (currentAttr.guid != Guid.Empty && !visited.Add(currentAttr.guid))
+                return;
+
+            for (int i = 0; i < currentAttr.cFuncs; i++) {
+                using var pFuncDescLease = TypeInfoDescriptor.Function(currentInfo, i);
+                FUNCDESC funcDesc = Marshal.PtrToStructure<FUNCDESC>(pFuncDescLease.Pointer);
+
+                string[] names = new string[1];
+                currentInfo.GetNames(funcDesc.memid, names, 1, out int cNames);
+                if (cNames > 0 && !string.IsNullOrEmpty(names[0])) {
+                    string memberName = names[0];
+                    if (memberName.Equals("Count", StringComparison.OrdinalIgnoreCase))
+                        hasCount = true;
+                    else if (AdobeObjectsSignatureMethods.Contains(memberName))
+                        seenSignatureMethods.Add(memberName);
+                }
+            }
+
+            for (int i = 0; i < currentAttr.cVars; i++) {
+                using var pVarDescLease = TypeInfoDescriptor.Variable(currentInfo, i);
+                VARDESC varDesc = Marshal.PtrToStructure<VARDESC>(pVarDescLease.Pointer);
+
+                string[] names = new string[1];
+                currentInfo.GetNames(varDesc.memid, names, 1, out int cNames);
+                if (cNames > 0 && !string.IsNullOrEmpty(names[0])) {
+                    string memberName = names[0];
+                    if (memberName.Equals("Count", StringComparison.OrdinalIgnoreCase))
+                        hasCount = true;
+                }
+            }
+
+            for (int i = 0; i < currentAttr.cImplTypes; i++) {
+                try {
+                    currentInfo.GetRefTypeOfImplType(i, out int hRef);
+                    currentInfo.GetRefTypeInfo(hRef, out ITypeInfo implInfo);
+                    if (implInfo != null) {
+                        try {
+                            using var pImplAttrLease = TypeInfoDescriptor.TypeAttributes(implInfo);
+                            TYPEATTR implAttr = Marshal.PtrToStructure<TYPEATTR>(pImplAttrLease.Pointer);
+                            InspectTypeInfo(implInfo, implAttr, depth + 1);
+                        }
+                        finally {
+                            Marshal.ReleaseComObject(implInfo);
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        InspectTypeInfo(typeInfo, attr, 0);
+        return hasCount && seenSignatureMethods.Count == AdobeObjectsSignatureMethods.Count;
     }
 
     private static bool IsTypeInfoCollection(ITypeInfo typeInfo, TYPEATTR attr) {

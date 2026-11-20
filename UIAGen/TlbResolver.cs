@@ -18,6 +18,12 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
+internal readonly record struct ResolvedTypeLibInfo(
+    ITypeLib TypeLib,
+    string FilePath,
+    string RegistryLocation,
+    string? ServerFilePath = null);
+
 internal static class TlbResolver {
     private static string[] OrderVersions(string[] versions) => versions
         .OrderByDescending(value => Version.TryParse(value, out var version) ? version : new Version(0, 0))
@@ -195,30 +201,54 @@ internal static class TlbResolver {
         public static ITypeLib? GetFromGuid(Guid typeLibGuid, short majorVersion, short minorVersion) {
             string hexVer = $"{majorVersion:x}.{minorVersion:x}";
             string decVer = $"{majorVersion}.{minorVersion}";
-            return GetFromGuidCore(typeLibGuid, [hexVer, decVer]);
+            return TryGetFromGuidCore(typeLibGuid, [hexVer, decVer], pathFilter: null, reportSkip: null, out ResolvedTypeLibInfo info) ? info.TypeLib : null;
         }
 
         public static ITypeLib? GetFromGuid(Guid typeLibGuid, string? preferredVersion = null) =>
-            GetFromGuidCore(typeLibGuid, [preferredVersion]);
+            TryGetFromGuidCore(typeLibGuid, [preferredVersion], pathFilter: null, reportSkip: null, out ResolvedTypeLibInfo info) ? info.TypeLib : null;
 
-        private static ITypeLib? GetFromGuidCore(Guid typeLibGuid, string?[] preferredVersions) {
+        public static bool TryResolveFromGuid(
+            Guid typeLibGuid,
+            string? preferredVersion,
+            out ResolvedTypeLibInfo info,
+            Func<string, bool>? pathFilter = null,
+            Action<string>? reportSkip = null) =>
+            TryGetFromGuidCore(typeLibGuid, [preferredVersion], pathFilter, reportSkip, out info);
+
+        private static bool TryGetFromGuidCore(
+            Guid typeLibGuid,
+            string?[] preferredVersions,
+            Func<string, bool>? pathFilter,
+            Action<string>? reportSkip,
+            out ResolvedTypeLibInfo info) {
+
+            info = default;
             RegistryView[] views = Environment.Is64BitOperatingSystem
                 ? [RegistryView.Registry64, RegistryView.Registry32]
                 : [RegistryView.Registry32];
             foreach (RegistryView view in views) {
                 using var root = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, view);
-                ITypeLib? library = GetFromRegistry(root, typeLibGuid, preferredVersions);
-                if (library != null)
-                    return library;
+                if (TryGetFromRegistry(root, view, typeLibGuid, preferredVersions, pathFilter, reportSkip, out info))
+                    return true;
             }
-            return null;
+            return false;
         }
 
-        internal static ITypeLib? GetFromRegistry(RegistryKey root, Guid typeLibGuid, params string?[] preferredVersions) {
+        internal static bool TryGetFromRegistry(
+            RegistryKey root,
+            RegistryView view,
+            Guid typeLibGuid,
+            string?[] preferredVersions,
+            Func<string, bool>? pathFilter,
+            Action<string>? reportSkip,
+            out ResolvedTypeLibInfo info) {
+
+            info = default;
+            string viewLabel = view == RegistryView.Registry32 && Environment.Is64BitOperatingSystem ? " (32-bit)" : string.Empty;
             try {
                 using var tlbKey = root.OpenSubKey($@"TypeLib\{typeLibGuid:B}");
                 if (tlbKey == null)
-                    return null;
+                    return false;
 
                 string[] versions = preferredVersions
                     .Where(version => !string.IsNullOrWhiteSpace(version))
@@ -238,208 +268,228 @@ internal static class TlbResolver {
                             using var pathKey = versionKey.OpenSubKey($@"{locale}\{platform}");
                             if (pathKey?.GetValue("") is not string rawPath || string.IsNullOrWhiteSpace(rawPath))
                                 continue;
-                            // Preserve an optional TYPELIB resource suffix (module.dll\\2).
-                            string path = Environment.ExpandEnvironmentVariables(rawPath.Trim()).Trim('"');
-                            if (LoadTypeLibEx(path, REGKIND.REGKIND_NONE, out ITypeLib loaded) == 0 && loaded != null)
-                                return loaded;
-                            else
-                                Console.Error.WriteLine($"  [SKIP] {pathKey.Name}: could not load type library.");
-                        }
-                    }
-                }
-            }
-            catch (Exception exception) when(exception is IOException or UnauthorizedAccessException or System.Security.SecurityException) {
-            Console.Error.WriteLine($"  [SKIP] {root.Name}\\TypeLib\\{typeLibGuid:B}: {exception.Message}");
-        }
-            return null;
-        }
-}
 
-public static class Finder {
-    public static ITypeLib? TypeLibFromName(string name) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ITypeLib? library = TypeLibFromProgId(name);
-        if (library != null)
-            return library;
+                            string cleanFilePath = Finder.CleanPath(rawPath);
+                            if (pathFilter != null && !pathFilter(cleanFilePath))
+                                continue;
 
-        var matches = new List<(Guid Guid, ITypeLib Library)>();
-        foreach (var registrations in UiaAdapter.RegistryTypeLibScanner.Find(name, Console.Error.WriteLine).GroupBy(entry => entry.Guid)) {
-            string? version = OrderVersions(registrations.Select(entry => entry.Version).OfType<string>().ToArray()).FirstOrDefault();
-            ITypeLib? candidate = TypeLib.GetFromGuid(registrations.Key, version);
-            if (candidate == null) {
-                Console.Error.WriteLine($"  [SKIP] {registrations.First().Source}: could not load type library {registrations.Key:B}.");
-                continue;
-            }
-            matches.Add((registrations.Key, candidate));
-        }
-        if (matches.Count > 1)
-            throw new InvalidOperationException($"Ambiguous name '{name}'. Matching type libraries: {string.Join(", ", matches.Select(match => match.Guid.ToString("B")))}. Specify a type library GUID or file path.");
-        return matches.Count == 1 ? matches[0].Library : null;
-    }
-
-    private static readonly Lazy<List<(string Guid, string Name)>> CachedTypeLibDescriptions = new(LoadTypeLibDescriptions);
-
-    private static List<(string Guid, string Name)> LoadTypeLibDescriptions() {
-        var entries = new List<(string Guid, string Name)>();
-        try {
-            using var typeLibsKey = Registry.ClassesRoot.OpenSubKey("TypeLib");
-            if (typeLibsKey == null)
-                return entries;
-
-            foreach (string guid in typeLibsKey.GetSubKeyNames()) {
-                try {
-                    using var guidKey = typeLibsKey.OpenSubKey(guid);
-                    if (guidKey == null)
-                        continue;
-
-                    foreach (string ver in guidKey.GetSubKeyNames()) {
-                        try {
-                            using var verKey = guidKey.OpenSubKey(ver);
-                            if (verKey?.GetValue("") is string name && !string.IsNullOrWhiteSpace(name)) {
-                                entries.Add((guid, name));
+                            // Preserve an optional TYPELIB resource suffix (module.dll\2).
+                            string loadPath = Environment.ExpandEnvironmentVariables(rawPath.Trim()).Trim('"');
+                            if (LoadTypeLibEx(loadPath, REGKIND.REGKIND_NONE, out ITypeLib loaded) == 0 && loaded != null) {
+                                string regLocation = $@"HKCR\TypeLib\{typeLibGuid:B}\{version}\{locale}\{platform}{viewLabel}";
+                                info = new ResolvedTypeLibInfo(loaded, cleanFilePath, regLocation);
+                                return true;
+                            }
+                            else {
+                                reportSkip?.Invoke($"  [SKIP] {pathKey.Name}: could not load type library.");
                             }
                         }
-                        catch { }
                     }
                 }
-                catch { }
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException) {
+                reportSkip?.Invoke($"  [SKIP] {root.Name}\\TypeLib\\{typeLibGuid:B}: {exception.Message}");
+            }
+            return false;
         }
-        catch { }
-        return entries;
     }
 
-    public static ITypeLib? TypeLibFromProgId(string progId) {
-        try {
-            using var progKey = Registry.ClassesRoot.OpenSubKey($@"{progId}\CLSID");
-            string? clsidStr = progKey?.GetValue("") as string;
-            if (string.IsNullOrEmpty(clsidStr))
-                return null;
+    public static class Finder {
+        public static ITypeLib? TypeLibFromName(string name) {
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            ITypeLib? library = TypeLibFromProgId(name);
+            if (library != null)
+                return library;
 
-            using var clsidKey = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsidStr}")
-                              ?? Registry.ClassesRoot.OpenSubKey($@"WOW6432Node\CLSID\{clsidStr}");
-            if (clsidKey == null)
-                return null;
-
-            string? modulePath = GetServerPath(clsidKey, "InProcServer32")
-                              ?? GetServerPath(clsidKey, "LocalServer32");
-
-            if (!string.IsNullOrEmpty(modulePath) && File.Exists(modulePath)) {
-                try {
-                    ITypeLib? tlb = Loader.TypeLibFromFile(modulePath);
-                    if (tlb != null)
-                        return tlb;
+            var matches = new List<(Guid Guid, ITypeLib Library)>();
+            foreach (var registrations in UiaAdapter.RegistryTypeLibScanner.Find(name, Console.Error.WriteLine).GroupBy(entry => entry.Guid)) {
+                string? version = OrderVersions(registrations.Select(entry => entry.Version).OfType<string>().ToArray()).FirstOrDefault();
+                ITypeLib? candidate = TypeLib.GetFromGuid(registrations.Key, version);
+                if (candidate == null) {
+                    Console.Error.WriteLine($"  [SKIP] {registrations.First().Source}: could not load type library {registrations.Key:B}.");
+                    continue;
                 }
-                catch { }
+                matches.Add((registrations.Key, candidate));
             }
+            if (matches.Count > 1)
+                throw new InvalidOperationException($"Ambiguous name '{name}'. Matching type libraries: {string.Join(", ", matches.Select(match => match.Guid.ToString("B")))}. Specify a type library GUID or file path.");
+            return matches.Count == 1 ? matches[0].Library : null;
+        }
 
-            string? typeLibGuid = clsidKey.OpenSubKey("TypeLib")?.GetValue("") as string;
+        private static readonly Lazy<List<(string Guid, string Name)>> CachedTypeLibDescriptions = new(LoadTypeLibDescriptions);
 
-            if (string.IsNullOrEmpty(typeLibGuid))
-                typeLibGuid = TypeLibGuidFromProgId(progId);
+        private static List<(string Guid, string Name)> LoadTypeLibDescriptions() {
+            var entries = new List<(string Guid, string Name)>();
+            try {
+                using var typeLibsKey = Registry.ClassesRoot.OpenSubKey("TypeLib");
+                if (typeLibsKey == null)
+                    return entries;
 
-            if (!string.IsNullOrEmpty(typeLibGuid)) {
-                string? tlbPath = PathFromTypeLibGuid(typeLibGuid);
-                if (!string.IsNullOrEmpty(tlbPath) && File.Exists(tlbPath)) {
+                foreach (string guid in typeLibsKey.GetSubKeyNames()) {
                     try {
-                        return Loader.TypeLibFromFile(tlbPath);
+                        using var guidKey = typeLibsKey.OpenSubKey(guid);
+                        if (guidKey == null)
+                            continue;
+
+                        foreach (string ver in guidKey.GetSubKeyNames()) {
+                            try {
+                                using var verKey = guidKey.OpenSubKey(ver);
+                                if (verKey?.GetValue("") is string name && !string.IsNullOrWhiteSpace(name)) {
+                                    entries.Add((guid, name));
+                                }
+                            }
+                            catch { }
+                        }
                     }
                     catch { }
                 }
             }
-        }
-        catch { }
-        return null;
-    }
-
-    private static string? TypeLibGuidFromProgId(string progId) {
-        string baseName = progId.Split('.')[0];
-        if (string.IsNullOrWhiteSpace(baseName))
-            return null;
-
-        string prefix = $"Microsoft {baseName}";
-        foreach (var (guid, name) in CachedTypeLibDescriptions.Value) {
-            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
-                return guid;
-            }
+            catch { }
+            return entries;
         }
 
-        return null;
-    }
+        public static ITypeLib? TypeLibFromProgId(string progId) =>
+            TryResolveFromProgId(progId, out ResolvedTypeLibInfo info) ? info.TypeLib : null;
 
-    private static string? PathFromTypeLibGuid(string typeLibGuid) {
-        string[] searchRoots = new[]
-        {
-                $@"TypeLib\{typeLibGuid}",
-                $@"WOW6432Node\TypeLib\{typeLibGuid}"
-            };
+        public static bool TryResolveFromProgId(
+            string progId,
+            out ResolvedTypeLibInfo info,
+            Func<string, bool>? pathFilter = null,
+            Action<string>? reportSkip = null) {
 
-        foreach (var root in searchRoots) {
+            info = default;
             try {
-                using var tlbKey = Registry.ClassesRoot.OpenSubKey(root);
-                if (tlbKey == null)
-                    continue;
+                using var progKey = Registry.ClassesRoot.OpenSubKey($@"{progId}\CLSID");
+                string? clsidStr = progKey?.GetValue("") as string;
+                if (string.IsNullOrEmpty(clsidStr))
+                    return false;
 
-                var versions = tlbKey.GetSubKeyNames();
-                versions = OrderVersions(versions);
+                string clsidSubPath = $@"CLSID\{clsidStr}";
+                using var clsidKey64 = Registry.ClassesRoot.OpenSubKey(clsidSubPath);
+                using var clsidKey32 = clsidKey64 == null ? Registry.ClassesRoot.OpenSubKey($@"WOW6432Node\{clsidSubPath}") : null;
+                RegistryKey? clsidKey = clsidKey64 ?? clsidKey32;
+                if (clsidKey == null)
+                    return false;
 
-                foreach (var ver in versions) {
-                    using var pathKey = tlbKey.OpenSubKey($@"{ver}\0\win64")
-                                     ?? tlbKey.OpenSubKey($@"{ver}\0\win32");
+                string clsidRootLabel = clsidKey64 != null ? $@"HKCR\CLSID\{clsidStr}" : $@"HKCR\WOW6432Node\CLSID\{clsidStr}";
 
-                    if (pathKey?.GetValue("") is string rawPath) {
-                        string cleanPath = CleanPath(rawPath);
-                        if (File.Exists(cleanPath))
-                            return cleanPath;
+                string? serverSubKey = null;
+                string? modulePath = GetServerPath(clsidKey, "InProcServer32");
+                if (!string.IsNullOrEmpty(modulePath)) {
+                    serverSubKey = "InProcServer32";
+                }
+                else {
+                    modulePath = GetServerPath(clsidKey, "LocalServer32");
+                    if (!string.IsNullOrEmpty(modulePath))
+                        serverSubKey = "LocalServer32";
+                }
+
+                bool serverMatchesFilter = pathFilter == null || (!string.IsNullOrEmpty(modulePath) && pathFilter(modulePath));
+                string? fullServerPath = (!string.IsNullOrEmpty(modulePath) && File.Exists(modulePath))
+                    ? Path.GetFullPath(modulePath)
+                    : null;
+
+                // 1. Prefer an explicit CLSID\TypeLib registration first so multi-resource binaries (like acad.exe)
+                //    resolve to the exact TypeLib GUID & resource index instead of grabbing resource #1 blindly.
+                string? typeLibGuidStr = clsidKey.OpenSubKey("TypeLib")?.GetValue("") as string;
+                string? preferredVersion = clsidKey.OpenSubKey("Version")?.GetValue("") as string;
+                bool fromClsidTypeLibKey = !string.IsNullOrEmpty(typeLibGuidStr);
+
+                if (string.IsNullOrEmpty(typeLibGuidStr))
+                    typeLibGuidStr = TypeLibGuidFromProgId(progId);
+
+                if (!string.IsNullOrEmpty(typeLibGuidStr) && Guid.TryParse(typeLibGuidStr, out Guid parsedTlbGuid) && parsedTlbGuid != Guid.Empty) {
+                    // If the COM server binary already matches the folder filter (e.g. acad.exe in C:\Program Files\Autodesk),
+                    // allow resolving its TypeLib even if the .tlb resides in Common Files\Autodesk Shared.
+                    Func<string, bool>? effectiveTypeLibFilter = serverMatchesFilter ? null : pathFilter;
+
+                    if (TypeLib.TryResolveFromGuid(parsedTlbGuid, preferredVersion, out ResolvedTypeLibInfo guidInfo, effectiveTypeLibFilter, reportSkip)) {
+                        string origin = fromClsidTypeLibKey
+                            ? $@"HKCR\{progId} -> {clsidRootLabel}\TypeLib -> {guidInfo.RegistryLocation}"
+                            : $@"HKCR\{progId} (description match) -> {guidInfo.RegistryLocation}";
+                        info = guidInfo with {
+                            RegistryLocation = origin,
+                            ServerFilePath = fullServerPath
+                        };
+                        return true;
                     }
+                }
+
+                // 2. Fallback: extract embedded TYPELIB directly from InProcServer32 / LocalServer32 binary.
+                if (fullServerPath != null && serverMatchesFilter) {
+                    try {
+                        ITypeLib? tlb = Loader.TypeLibFromFile(fullServerPath);
+                        if (tlb != null) {
+                            info = new ResolvedTypeLibInfo(
+                                tlb,
+                                fullServerPath,
+                                $@"HKCR\{progId} -> {clsidRootLabel}\{serverSubKey}",
+                                fullServerPath);
+                            return true;
+                        }
+                    }
+                    catch { }
                 }
             }
             catch { }
+            return false;
         }
 
-        return null;
-    }
+        private static string? TypeLibGuidFromProgId(string progId) {
+            string baseName = progId.Split('.')[0];
+            if (string.IsNullOrWhiteSpace(baseName))
+                return null;
 
-    private static string? GetServerPath(RegistryKey parentKey, string subKeyName) {
-        try {
-            using var key = parentKey.OpenSubKey(subKeyName);
-            if (key?.GetValue("") is string rawPath) {
-                return CleanPath(rawPath);
+            string prefix = $"Microsoft {baseName}";
+            foreach (var (guid, name) in CachedTypeLibDescriptions.Value) {
+                if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) {
+                    return guid;
+                }
             }
+
+            return null;
         }
-        catch { }
-        return null;
-    }
 
-    public static string CleanPath(string rawPath) {
-        if (string.IsNullOrWhiteSpace(rawPath))
-            return string.Empty;
-
-        string path = Environment.ExpandEnvironmentVariables(rawPath.Trim());
-
-        if (path.StartsWith("\"")) {
-            int secondQuote = path.IndexOf('"', 1);
-            if (secondQuote > 1) {
-                return path.Substring(1, secondQuote - 1);
+        private static string? GetServerPath(RegistryKey parentKey, string subKeyName) {
+            try {
+                using var key = parentKey.OpenSubKey(subKeyName);
+                if (key?.GetValue("") is string rawPath) {
+                    return CleanPath(rawPath);
+                }
             }
+            catch { }
+            return null;
         }
 
-        int flagIndex = path.IndexOf(" /", StringComparison.Ordinal);
-        if (flagIndex == -1)
-            flagIndex = path.IndexOf(" -", StringComparison.Ordinal);
+        public static string CleanPath(string rawPath) {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                return string.Empty;
 
-        if (flagIndex > 0) {
-            path = path.Substring(0, flagIndex);
-        }
+            string path = Environment.ExpandEnvironmentVariables(rawPath.Trim());
 
-        int lastSlash = path.LastIndexOf('\\');
-        if (lastSlash > 0 && lastSlash < path.Length - 1) {
-            if (int.TryParse(path.Substring(lastSlash + 1), out _)) {
-                path = path.Substring(0, lastSlash);
+            if (path.StartsWith("\"")) {
+                int secondQuote = path.IndexOf('"', 1);
+                if (secondQuote > 1) {
+                    return path.Substring(1, secondQuote - 1);
+                }
             }
-        }
 
-        return path.Trim();
+            int flagIndex = path.IndexOf(" /", StringComparison.Ordinal);
+            if (flagIndex == -1)
+                flagIndex = path.IndexOf(" -", StringComparison.Ordinal);
+
+            if (flagIndex > 0) {
+                path = path.Substring(0, flagIndex);
+            }
+
+            int lastSlash = path.LastIndexOf('\\');
+            if (lastSlash > 0 && lastSlash < path.Length - 1) {
+                if (int.TryParse(path.Substring(lastSlash + 1), out _)) {
+                    path = path.Substring(0, lastSlash);
+                }
+            }
+
+            return path.Trim();
+        }
     }
-}
 }

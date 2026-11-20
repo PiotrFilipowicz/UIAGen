@@ -10,8 +10,12 @@
 // </security>
 //------------------------------------------------------------------------------
 
+using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
@@ -24,6 +28,10 @@ internal sealed record DiscoveredTypeLib(
     string ShortName,
     string Namespace,
     string FilePrefix,
+    string ProgId,
+    string Description,
+    string TlbFilePath,
+    string RegistryLocation,
     bool IsPrimary);
 
 internal static class TypeLibDependencyScanner {
@@ -61,8 +69,10 @@ internal static class TypeLibDependencyScanner {
 
         foreach (var (progId, typeLib) in primaryLibs) {
             TYPELIBATTR libAttr = TypeInfoDescriptor.LibraryAttributes(typeLib);
+            var (description, tlbPath, regLocation) = ResolvePrimaryLocation(progId, typeLib, libAttr);
+
             if (discoveredByGuid.TryGetValue(libAttr.guid, out DiscoveredTypeLib? existing)) {
-                TryUpgradeExisting(typeLib, libAttr, existing, discoveredByGuid, queue);
+                TryUpgradeExisting(typeLib, libAttr, existing, discoveredByGuid, queue, progId, description, tlbPath, regLocation, isPrimary: true);
                 continue;
             }
 
@@ -72,7 +82,17 @@ internal static class TypeLibDependencyScanner {
             string filePrefix = singlePrimaryMode ? rootNamespace : $"{rootNamespace}.{shortName}";
 
             usedNamespaces.Add(ns);
-            var entry = new DiscoveredTypeLib(libAttr.guid, typeLib, shortName, ns, filePrefix, IsPrimary: true);
+            var entry = new DiscoveredTypeLib(
+                libAttr.guid,
+                typeLib,
+                shortName,
+                ns,
+                filePrefix,
+                progId,
+                description,
+                tlbPath,
+                regLocation,
+                IsPrimary: true);
             discoveredByGuid[libAttr.guid] = entry;
             queue.Enqueue(entry);
         }
@@ -193,7 +213,14 @@ internal static class TypeLibDependencyScanner {
 
                 ITypeLib? ifaceLib = TlbResolver.TypeLib.GetFromGuid(ifaceTlbGuid, ifaceVersion);
                 if (ifaceLib != null) {
-                    RegisterOrUpgradeExternalTypeLib(ifaceLib, discoveredByGuid, usedNamespaces, rootNamespace, queue);
+                    TYPELIBATTR ifaceLibAttr = TypeInfoDescriptor.LibraryAttributes(ifaceLib);
+                    var (description, tlbPath, tlbRegPath) = ResolveTypeLibRegistryDetails(ifaceLib, ifaceLibAttr.guid, ifaceVersion, ifaceLibAttr.wMajorVerNum, ifaceLibAttr.wMinorVerNum);
+                    string sourcePrefix = $"HKEY_CLASSES_ROOT\\Interface\\{refAttr.guid:B}\\TypeLib";
+                    string combinedRegLocation = string.IsNullOrWhiteSpace(tlbRegPath)
+                        ? sourcePrefix
+                        : $"{sourcePrefix} -> {tlbRegPath}";
+
+                    RegisterOrUpgradeExternalTypeLib(ifaceLib, description, tlbPath, combinedRegLocation, discoveredByGuid, usedNamespaces, rootNamespace, queue);
                 }
             }
         }
@@ -211,13 +238,19 @@ internal static class TypeLibDependencyScanner {
             ITypeLib resolvedLib = TlbResolver.TypeLib.GetFromGuid(refLibAttr.guid, refLibAttr.wMajorVerNum, refLibAttr.wMinorVerNum)
                 ?? containingLib;
 
-            RegisterOrUpgradeExternalTypeLib(resolvedLib, discoveredByGuid, usedNamespaces, rootNamespace, queue);
+            TYPELIBATTR resolvedAttr = TypeInfoDescriptor.LibraryAttributes(resolvedLib);
+            var (description, tlbPath, tlbRegPath) = ResolveTypeLibRegistryDetails(resolvedLib, resolvedAttr.guid, null, resolvedAttr.wMajorVerNum, resolvedAttr.wMinorVerNum);
+
+            RegisterOrUpgradeExternalTypeLib(resolvedLib, description, tlbPath, tlbRegPath, discoveredByGuid, usedNamespaces, rootNamespace, queue);
         }
         catch { }
     }
 
     private static void RegisterOrUpgradeExternalTypeLib(
         ITypeLib typeLib,
+        string description,
+        string tlbFilePath,
+        string registryLocation,
         Dictionary<Guid, DiscoveredTypeLib> discoveredByGuid,
         HashSet<string> usedNamespaces,
         string rootNamespace,
@@ -228,7 +261,7 @@ internal static class TypeLibDependencyScanner {
             return;
 
         if (discoveredByGuid.TryGetValue(libAttr.guid, out DiscoveredTypeLib? existing)) {
-            TryUpgradeExisting(typeLib, libAttr, existing, discoveredByGuid, queue);
+            TryUpgradeExisting(typeLib, libAttr, existing, discoveredByGuid, queue, candidateDescription: description, candidateTlbPath: tlbFilePath, candidateRegLocation: registryLocation);
             return;
         }
 
@@ -238,7 +271,17 @@ internal static class TypeLibDependencyScanner {
         string filePrefix = $"{rootNamespace}.{shortName}";
 
         usedNamespaces.Add(ns);
-        var entry = new DiscoveredTypeLib(libAttr.guid, typeLib, shortName, ns, filePrefix, IsPrimary: false);
+        var entry = new DiscoveredTypeLib(
+            libAttr.guid,
+            typeLib,
+            shortName,
+            ns,
+            filePrefix,
+            ProgId: string.Empty,
+            Description: description,
+            TlbFilePath: tlbFilePath,
+            RegistryLocation: registryLocation,
+            IsPrimary: false);
         discoveredByGuid[libAttr.guid] = entry;
         queue.Enqueue(entry);
     }
@@ -248,7 +291,12 @@ internal static class TypeLibDependencyScanner {
         TYPELIBATTR candidateAttr,
         DiscoveredTypeLib existing,
         Dictionary<Guid, DiscoveredTypeLib> discoveredByGuid,
-        Queue<DiscoveredTypeLib> queue) {
+        Queue<DiscoveredTypeLib> queue,
+        string? candidateProgId = null,
+        string? candidateDescription = null,
+        string? candidateTlbPath = null,
+        string? candidateRegLocation = null,
+        bool isPrimary = false) {
 
         TYPELIBATTR existingAttr = TypeInfoDescriptor.LibraryAttributes(existing.TypeLib);
         ushort candMajor = unchecked((ushort)candidateAttr.wMajorVerNum);
@@ -260,12 +308,165 @@ internal static class TypeLibDependencyScanner {
         bool isSameVersionRicher = candMajor == existMajor && candMinor == existMinor &&
             candidateLib.GetTypeInfoCount() > existing.TypeLib.GetTypeInfoCount();
 
-        if (!isNewerVersion && !isSameVersionRicher)
-            return;
+        string resolvedProgId = existing.ProgId;
+        if (string.IsNullOrWhiteSpace(resolvedProgId) && !string.IsNullOrWhiteSpace(candidateProgId))
+            resolvedProgId = candidateProgId;
 
-        DiscoveredTypeLib upgraded = existing with { TypeLib = candidateLib };
+        string resolvedDescription = existing.Description;
+        if ((isNewerVersion || isSameVersionRicher || string.IsNullOrWhiteSpace(resolvedDescription)) && !string.IsNullOrWhiteSpace(candidateDescription))
+            resolvedDescription = candidateDescription;
+
+        string resolvedTlbPath = existing.TlbFilePath;
+        if ((isNewerVersion || isSameVersionRicher || string.IsNullOrWhiteSpace(resolvedTlbPath)) && !string.IsNullOrWhiteSpace(candidateTlbPath))
+            resolvedTlbPath = candidateTlbPath;
+
+        string resolvedRegLocation = existing.RegistryLocation;
+        if ((isNewerVersion || isSameVersionRicher || string.IsNullOrWhiteSpace(resolvedRegLocation)) && !string.IsNullOrWhiteSpace(candidateRegLocation))
+            resolvedRegLocation = candidateRegLocation;
+
+        bool resolvedPrimary = existing.IsPrimary || isPrimary;
+
+        if (!isNewerVersion &&
+            !isSameVersionRicher &&
+            resolvedProgId == existing.ProgId &&
+            resolvedDescription == existing.Description &&
+            resolvedTlbPath == existing.TlbFilePath &&
+            resolvedRegLocation == existing.RegistryLocation &&
+            resolvedPrimary == existing.IsPrimary) {
+            return;
+        }
+
+        DiscoveredTypeLib upgraded = existing with {
+            TypeLib = (isNewerVersion || isSameVersionRicher) ? candidateLib : existing.TypeLib,
+            ProgId = resolvedProgId,
+            Description = resolvedDescription,
+            TlbFilePath = resolvedTlbPath,
+            RegistryLocation = resolvedRegLocation,
+            IsPrimary = resolvedPrimary
+        };
         discoveredByGuid[existing.Guid] = upgraded;
-        queue.Enqueue(upgraded);
+        if (isNewerVersion || isSameVersionRicher)
+            queue.Enqueue(upgraded);
+    }
+
+    private static (string Description, string TlbFilePath, string RegistryLocation) ResolvePrimaryLocation(string progId, ITypeLib typeLib, TYPELIBATTR libAttr) {
+        var (description, tlbPath, tlbRegPath) = ResolveTypeLibRegistryDetails(typeLib, libAttr.guid, null, libAttr.wMajorVerNum, libAttr.wMinorVerNum);
+
+        if (File.Exists(progId)) {
+            string fullPath = Path.GetFullPath(progId);
+            return (description, fullPath, string.IsNullOrWhiteSpace(tlbRegPath) ? $"File: {fullPath}" : $"File: {fullPath} ({tlbRegPath})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(progId) && !progId.StartsWith("HKEY_", StringComparison.OrdinalIgnoreCase)) {
+            try {
+                using RegistryKey? progKey = Registry.ClassesRoot.OpenSubKey(progId);
+                if (progKey != null) {
+                    string progRegPath = $"HKEY_CLASSES_ROOT\\{progId}";
+                    string combined = string.IsNullOrWhiteSpace(tlbRegPath)
+                        ? progRegPath
+                        : $"{progRegPath} -> {tlbRegPath}";
+                    return (description, tlbPath, combined);
+                }
+            }
+            catch { }
+        }
+
+        return (description, tlbPath, tlbRegPath);
+    }
+
+    internal static (string Description, string TlbFilePath, string RegistryLocation) ResolveTypeLibRegistryDetails(
+        ITypeLib? typeLib,
+        Guid typeLibGuid,
+        string? preferredVersion,
+        short majorVer,
+        short minorVer) {
+
+        string fallbackDocString = GetTypeLibDocString(typeLib);
+        if (typeLibGuid == Guid.Empty)
+            return (fallbackDocString, string.Empty, string.Empty);
+
+        string guidSubKey = $"TypeLib\\{typeLibGuid:B}";
+        string exactVersion = $"{unchecked((ushort)majorVer):x}.{unchecked((ushort)minorVer):x}";
+        string decimalVersion = $"{unchecked((ushort)majorVer).ToString(CultureInfo.InvariantCulture)}.{unchecked((ushort)minorVer).ToString(CultureInfo.InvariantCulture)}";
+
+        foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 }) {
+            try {
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, view);
+                using RegistryKey? libKey = baseKey.OpenSubKey(guidSubKey);
+                if (libKey == null)
+                    continue;
+
+                var candidateVersions = new List<string>(4);
+                if (!string.IsNullOrWhiteSpace(preferredVersion))
+                    candidateVersions.Add(preferredVersion);
+                candidateVersions.Add(exactVersion);
+                if (!string.Equals(exactVersion, decimalVersion, StringComparison.OrdinalIgnoreCase))
+                    candidateVersions.Add(decimalVersion);
+
+                foreach (string subVer in libKey.GetSubKeyNames()) {
+                    if (!candidateVersions.Contains(subVer, StringComparer.OrdinalIgnoreCase))
+                        candidateVersions.Add(subVer);
+                }
+
+                foreach (string ver in candidateVersions) {
+                    using RegistryKey? verKey = libKey.OpenSubKey(ver);
+                    if (verKey == null)
+                        continue;
+
+                    string regDescription = (verKey.GetValue("") as string)?.Trim() ?? string.Empty;
+                    string effectiveDescription = !string.IsNullOrWhiteSpace(regDescription) ? regDescription : fallbackDocString;
+
+                    string[] lcidCandidates = verKey.GetSubKeyNames();
+                    var orderedLcids = new List<string>(lcidCandidates.Length + 1);
+                    if (lcidCandidates.Contains("0", StringComparer.OrdinalIgnoreCase))
+                        orderedLcids.Add("0");
+                    foreach (string lcid in lcidCandidates) {
+                        if (!string.Equals(lcid, "0", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(lcid, "FLAGS", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(lcid, "HELPDIR", StringComparison.OrdinalIgnoreCase)) {
+                            orderedLcids.Add(lcid);
+                        }
+                    }
+
+                    foreach (string lcid in orderedLcids) {
+                        using RegistryKey? lcidKey = verKey.OpenSubKey(lcid);
+                        if (lcidKey == null)
+                            continue;
+
+                        foreach (string platform in new[] { "win64", "win32" }) {
+                            using RegistryKey? platKey = lcidKey.OpenSubKey(platform);
+                            if (platKey?.GetValue("") is string rawPath && !string.IsNullOrWhiteSpace(rawPath)) {
+                                string cleanPath = Environment.ExpandEnvironmentVariables(rawPath.Trim().Trim('"'));
+                                string viewSuffix = view == RegistryView.Registry32 ? " [WOW6432Node]" : string.Empty;
+                                string regPath = $"HKEY_CLASSES_ROOT\\{guidSubKey}\\{ver}\\{lcid}\\{platform}{viewSuffix}";
+                                return (effectiveDescription, cleanPath, regPath);
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(effectiveDescription)) {
+                        string viewSuffix = view == RegistryView.Registry32 ? " [WOW6432Node]" : string.Empty;
+                        return (effectiveDescription, string.Empty, $"HKEY_CLASSES_ROOT\\{guidSubKey}\\{ver}{viewSuffix}");
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return (fallbackDocString, string.Empty, $"HKEY_CLASSES_ROOT\\{guidSubKey}");
+    }
+
+    private static string GetTypeLibDocString(ITypeLib? typeLib) {
+        if (typeLib == null)
+            return string.Empty;
+
+        try {
+            typeLib.GetDocumentation(-1, out _, out string docString, out _, out _);
+            return docString?.Trim() ?? string.Empty;
+        }
+        catch {
+            return string.Empty;
+        }
     }
 
     private static string GetTypeLibShortName(ITypeLib typeLib, string fallback) {

@@ -489,3 +489,6 @@ $RECYCLE.BIN/
 *.pfx
 *.nupkg
 nupkg/
+
+#Local folder
+Local/

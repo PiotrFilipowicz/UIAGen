@@ -25,11 +25,10 @@ public partial class UiaAdapterWrapper {
         nint pAttr = pAttrLease.Pointer;
         TYPEATTR attr = Marshal.PtrToStructure<TYPEATTR>(pAttr);
 
-        bool isAdobeAdapter = IsAdobeAdapter;
         bool isObjects = baseName.Equals("Objects", StringComparison.OrdinalIgnoreCase);
-        bool isAdobeObjects = isObjects && isAdobeAdapter;
+        bool isAdobeObjects = isObjects && (HasAdobeObjectsModel || IsAdobeObjectsTypeInfo(typeInfo, attr) || IsAdobeAdapter);
         bool isRealCollection = !isObjects && IsTypeInfoCollection(typeInfo, attr);
-        bool isAdobeCollection = isRealCollection && isAdobeAdapter;
+        bool isAdobeCollection = isRealCollection && (HasAdobeObjectsModel || IsAdobeAdapter);
         bool usesCollectionBase = isRealCollection || isAdobeObjects;
 
         string inheritance;
@@ -138,15 +137,11 @@ public class {{safeTypeName}}{{inheritance}} {
         }
 
         if (isAdobeCollection || isAdobeObjects) {
-            emittedMemberNames.Add("Remove");
-            emittedMemberNames.Add("ItemByID");
-            emittedMemberNames.Add("ItemByRange");
             emittedMemberNames.Add("FirstItem");
             emittedMemberNames.Add("LastItem");
             emittedMemberNames.Add("MiddleItem");
             emittedMemberNames.Add("PreviousItem");
             emittedMemberNames.Add("NextItem");
-            emittedMemberNames.Add("AnyItem");
         }
 
         bool IsSafeDebuggerMethod(string name) =>

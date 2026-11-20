@@ -4,7 +4,7 @@
 [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
 
-`UIAGen` reads Windows COM type libraries (TLBs) and generates typed C# adapters for .NET 10, including adapters for Microsoft Office and Adobe applications. You write ordinary C# against generated classes, get IntelliSense and compile-time checks, and can inspect the same typed object model in Visual Studio. The generated runtime uses native COM Automation calls without requiring a Primary Interop Assembly (PIA) or the C# `dynamic` binder.
+`UIAGen` reads Windows COM type libraries (TLBs) and generates typed C# adapters for .NET 10, including adapters for Microsoft Office, Adobe Creative Cloud, and Autodesk AutoCAD applications. You write ordinary C# against generated classes, get IntelliSense and compile-time checks, and can inspect the same typed object model in Visual Studio. The generated runtime uses native COM Automation calls without requiring a Primary Interop Assembly (PIA) or the C# `dynamic` binder.
 
 ## Static types and IntelliSense
 
@@ -169,9 +169,10 @@ dotnet $generator Word.Application,Excel.Application,Access.Application,PowerPoi
 # Combine a file, a ProgID, and a registered class name in one adapter (PowerShell 7.3+).
 dotnet $generator '"C:\Type Libraries\Custom, v2.tlb",Word.Application,"Microsoft Excel Application"' C:\Temp\CombinedUIA CombinedAdapter
 
-# Scan registered libraries; the optional final argument combines output into one adapter.
+# Scan registered libraries; optional -filter restricts paths and -list prints discovered servers without generating code.
 dotnet $generator -all C:\Temp\UiaAll
 dotnet $generator -all C:\Temp\UiaCombined CombinedAdapter
+dotnet $generator -all -filter "C:\Program Files\Autodesk,C:\Program Files\Common Files\Autodesk Shared" -list
 ```
 
 Combined-adapter syntax: `UIAGen Module1,Module2,Module3 outputFolder className`. Pass the list as a single command-line argument; it can contain one or more modules. A module can be a path to a `.tlb`, `.exe`, or `.dll` that contains a type library, a ProgID, or a registered name or GUID under `HKEY_CLASSES_ROOT\CLSID`, `TypeLib`, or `Interface`. Double quotes can enclose individual module names; if a name contains a comma, the shell must pass those double quotes through to `UIAGen` as shown above. The final `className` names the adapter's root namespace, not a COM class. The generator does not write output unless all listed modules resolve.
@@ -180,9 +181,9 @@ Single-library syntax: `tlbOrProgIdOrName className projectName prefixName [outp
 
 ### Why type-library discovery does not activate COM servers
 
-Generation reads metadata, not live application objects. The resolver accepts existing file paths and tries ProgIDs before searching registered names or GUIDs. Registry discovery examines both the 32-bit and 64-bit views; interface and class entries can resolve to a registered TLB. Multiple versions of one GUID are not ambiguous, but multiple loadable library GUIDs matching the same name are reported as an error rather than selected arbitrarily.
+Generation reads metadata, not live application objects. The resolver accepts existing file paths and tries ProgIDs before searching registered names or GUIDs. For ProgIDs backed by multi-resource binaries (such as `acad.exe`), the resolver consults `CLSID\TypeLib` before probing embedded `TYPELIB` resources directly so the exact registered type library is selected. Registry discovery examines both the 32-bit and 64-bit views; interface and class entries can resolve to a registered TLB. Multiple versions of one GUID are not ambiguous, but multiple loadable library GUIDs matching the same name are reported as an error rather than selected arbitrarily.
 
-`LoadTypeLibEx` is called with `REGKIND_NONE` and returns an `HRESULT` to the resolver. A failed direct load is a normal probe result: the resolver can try embedded `TYPELIB` resources without creating a `COMException` for the failed load. `--all` deduplicates libraries by GUID, prefers ProgID sources, and reports unreadable or stale entries as `[SKIP]` where applicable. Adapter generation failures are reported separately.
+`LoadTypeLibEx` is called with `REGKIND_NONE` and returns an `HRESULT` to the resolver. A failed direct load is a normal probe result: the resolver can try embedded `TYPELIB` resources without creating a `COMException` for the failed load. `-all` deduplicates libraries by GUID, prefers ProgID sources, supports folder filtering (`-filter`) across both TLB and server binary paths (`InProcServer32` / `LocalServer32`), and can list matching servers without emitting files (`-list`). Adapter generation failures are reported separately.
 
 ## Collections
 
@@ -203,6 +204,44 @@ At a breakpoint, expand a generated wrapper in **Locals** or **Watch**. The debu
 Expansion can execute COM calls. The view therefore excludes selected properties from automatic evaluation and can limit or block collection enumeration. Internally, one indexed switch per wrapper dispatches property reads without allocating a delegate per property. Expand `_DynamicDisplay` explicitly when you need to inspect members returned by the COM server by name; this view can show raw Automation values, such as an `int` in place of `idUndoModes`. It is a debugger feature, not a requirement to use `dynamic` in application code.
 
 The **Type** suffix is empty when a known `DISPID` was used, `[fallback]` when an early invocation was retried by name, and `[late]` when the invocation used name-based resolution from the start. These labels describe invocation, not the C# type of the wrapper. Use a debugger-enabled build for inspection; publishing with debugger support disabled is a separate choice from using Native AOT.
+
+## Case Study: Autodesk AutoCAD COM Type Library Dependency Graph
+
+Running `UIAGen.exe -all -filter` against an Autodesk AutoCAD 2026 installation demonstrates how the generator discovers and resolves cross-library `HREFTYPE` dependencies directly from binary TypeLibs without reflection or `tlbimp.exe`:
+
+```text
+Found 4 type libraries for 'AcAuthEntitiesComLibAdapter' (3 external - stdole, AXDBLib, MSForms).
+Found 4 type libraries for 'ACSMCOMPONENTS25LibAdapter' (3 external - stdole, AXDBLib, MSForms).
+Found 4 type libraries for 'AutoCADAdapter' (3 external - stdole, AXDBLib, MSForms).
+Found 5 type libraries for 'axctextappLibAdapter' (4 external - stdole, AutoCAD, AXDBLib, MSForms).
+Found 5 type libraries for 'axrtextLibAdapter' (4 external - stdole, AutoCAD, AXDBLib, MSForms).
+Found 5 type libraries for 'CAOAdapter' (4 external - stdole, AutoCAD, MSForms, AXDBLib).
+Found 4 type libraries for 'MPolygonComLibAdapter' (3 external - stdole, AXDBLib, MSForms).
+Found 4 type libraries for 'ObjClassImpLibAdapter' (3 external - stdole, AXDBLib, MSForms).
+
+Found 3 type libraries for 'ACCTRLLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'AcDwgFilterImpLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'ACFOCUSCTRLLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'ACHELPLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'ACINETENGINELibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'ACSIGNCORE16LibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'AdComFolderWatchLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'AXDBLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'TRANSMITTALLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'WebServicesLibAdapter' (2 external - stdole, MSForms).
+```
+
+### Architectural insights from the resolved graph
+
+1. **Clear separation between core/headless modules and the application UI layer**
+   - **Standalone / Core Layer (`AXDBLib`, `ACCTRLLib`, `TRANSMITTALLib`, `AcSignCore16Lib`, etc.):** Depends solely on `stdole` and `MSForms`. Libraries such as ObjectDBX (`AXDBLib`) or eTransmit (`TRANSMITTALLib`) can be bound and used without pulling in the main `AutoCAD` application object model.
+   - **Application & Express Tools Layer (`CAOAdapter`, `axctextappLib`, `axrtextLib`):** Explicitly references both `AutoCAD` and `AXDBLib`, operating directly on document windows, selection sets, and drawing collections.
+
+2. **Acyclic dependency hierarchy (`AutoCAD` → `AXDBLib`)**
+   - `AutoCADAdapter` depends on `AXDBLib`, whereas `AXDBLibAdapter` has no reverse dependency on `AutoCAD`. This acyclic structure allows generating either isolated per-library adapters or a single unified adapter sharing common base classes (`AcadEntity`, `AcadDatabase`, `AcCmColor`) and a single `TypeMappings` dispatch table.
+
+3. **Automatic resolution of implicit `MSForms` (`FM20.DLL`) references**
+   - AutoCAD COM libraries expose ActiveX control and data-transfer interfaces (`DataObject`, `Picture`, `Font`) that reference `Microsoft Forms 2.0 Object Library` (`MSForms`). `UIAGen` automatically follows these binary `HREFTYPE` links and emits the required external type definitions without manual `FM20.DLL` hunting.
 
 ## Source layout
 

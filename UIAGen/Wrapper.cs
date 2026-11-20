@@ -115,7 +115,18 @@ public partial class UiaAdapterWrapper {
         }
     };
 
+    private static readonly HashSet<string> AdobeObjectsSignatureMethods = new(StringComparer.OrdinalIgnoreCase) {
+        "FirstItem",
+        "LastItem",
+        "MiddleItem",
+        "PreviousItem",
+        "NextItem",
+    };
+
+    internal bool HasAdobeObjectsModel { get; private set; }
+
     internal bool IsAdobeAdapter =>
+        HasAdobeObjectsModel ||
         AdapterClassName.Equals("AdobeAdapter", StringComparison.OrdinalIgnoreCase) ||
         AdapterClassName.EndsWith(".InDesign", StringComparison.OrdinalIgnoreCase) ||
         AdapterClassName.EndsWith(".InCopy", StringComparison.OrdinalIgnoreCase);

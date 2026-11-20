@@ -101,15 +101,11 @@ public static partial class ComProxyFactory {
 
     private const string AdobeObjectsMembers = /*lang=c#*/ """
     public override int Count => GetValue<int>(nameof(Count), 1668183141);
-    public void Remove(int index) => InvokeVoid("Remove", 1382370678, index);
-    public ComProxy ItemByID(int id) => InvokeCollectionItem<ComProxy>("ItemByID", 1115244868, id);
-    public Objects ItemByRange(object from, object to) => InvokeWrapper<Objects>("ItemByRange", 1918987879, from, to);
     public ComProxy FirstItem() => InvokeCollectionItem<ComProxy>("FirstItem", 1718186611);
     public ComProxy LastItem() => InvokeCollectionItem<ComProxy>("LastItem", 1818325876);
     public ComProxy MiddleItem() => InvokeCollectionItem<ComProxy>("MiddleItem", 1835623524);
     public ComProxy PreviousItem(object fromHere) => InvokeCollectionItem<ComProxy>("PreviousItem", 1886545270, fromHere);
     public ComProxy NextItem(object fromHere) => InvokeCollectionItem<ComProxy>("NextItem", 1852143732, fromHere);
-    public ComProxy AnyItem() => InvokeCollectionItem<ComProxy>("AnyItem", 1634629920);
 """;
 
     private static void AppendAdobeObjectsTypes(Action<string> append, bool hasObjects) {
@@ -137,13 +133,11 @@ public class Objects<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.
     public new static Objects<TItem> GetMissing() => ComProxy.Missing<Objects<TItem>>();
     public Objects(object comInstance) : base(comInstance) { }
 {{typedMembers}}
-    public new TItem ItemByID(int id) => InvokeCollectionItem<TItem>("ItemByID", 1115244868, id);
     public new TItem FirstItem() => InvokeCollectionItem<TItem>("FirstItem", 1718186611);
     public new TItem LastItem() => InvokeCollectionItem<TItem>("LastItem", 1818325876);
     public new TItem MiddleItem() => InvokeCollectionItem<TItem>("MiddleItem", 1835623524);
     public new TItem PreviousItem(object fromHere) => InvokeCollectionItem<TItem>("PreviousItem", 1886545270, fromHere);
     public new TItem NextItem(object fromHere) => InvokeCollectionItem<TItem>("NextItem", 1852143732, fromHere);
-    public new TItem AnyItem() => InvokeCollectionItem<TItem>("AnyItem", 1634629920);
 }
 """);
     }
