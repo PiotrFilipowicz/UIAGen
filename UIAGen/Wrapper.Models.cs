@@ -32,10 +32,12 @@ public partial class UiaAdapterWrapper {
         public bool IsSetRef { get; set; }
     }
 
+    private sealed record ParamModel(string Name, string RawType, bool IsOptional, bool HasDefault = false, object? DefaultValue = null); 
+    
     private class FuncModel {
         public string Name { get; set; } = "";
         public int DispId { get; set; }
         public string RawReturnType { get; set; } = "void";
-        public List<(string Name, string RawType, bool IsOptional)> Params { get; set; } = new();
+        public List<ParamModel> Params { get; set; } = new();
     }
 }

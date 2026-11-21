@@ -175,10 +175,10 @@ namespace {{targetNamespace}};
         DiscoveredObjectsMembers.Add("ItemByID");
         DiscoveredObjectsMembers.Add("ItemByRange");
         DiscoveredObjectsMembers.Add("Remove");
+        DiscoveredObjectsMembers.Add("Add");
     }
 
     private static bool IsAdobeObjectsTypeInfo(ITypeInfo typeInfo, TYPEATTR attr) {
-        bool hasCount = false;
         var seenSignatureMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visited = new HashSet<Guid>();
 
@@ -196,9 +196,7 @@ namespace {{targetNamespace}};
                 currentInfo.GetNames(funcDesc.memid, names, 1, out int cNames);
                 if (cNames > 0 && !string.IsNullOrEmpty(names[0])) {
                     string memberName = names[0];
-                    if (memberName.Equals("Count", StringComparison.OrdinalIgnoreCase))
-                        hasCount = true;
-                    else if (AdobeObjectsSignatureMethods.Contains(memberName))
+                    if (AdobeObjectsSignatureMethods.Contains(memberName))
                         seenSignatureMethods.Add(memberName);
                 }
             }
@@ -211,8 +209,8 @@ namespace {{targetNamespace}};
                 currentInfo.GetNames(varDesc.memid, names, 1, out int cNames);
                 if (cNames > 0 && !string.IsNullOrEmpty(names[0])) {
                     string memberName = names[0];
-                    if (memberName.Equals("Count", StringComparison.OrdinalIgnoreCase))
-                        hasCount = true;
+                    if (AdobeObjectsSignatureMethods.Contains(memberName))
+                        seenSignatureMethods.Add(memberName);
                 }
             }
 
@@ -236,7 +234,7 @@ namespace {{targetNamespace}};
         }
 
         InspectTypeInfo(typeInfo, attr, 0);
-        return hasCount && seenSignatureMethods.Count == AdobeObjectsSignatureMethods.Count;
+        return seenSignatureMethods.Count == AdobeObjectsSignatureMethods.Count;
     }
 
     private static bool IsTypeInfoCollection(ITypeInfo typeInfo, TYPEATTR attr) {

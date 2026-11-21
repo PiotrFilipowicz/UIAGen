@@ -18,6 +18,24 @@ using System.Runtime.InteropServices.ComTypes;
 namespace UiaAdapter;
 
 public partial class UiaAdapterWrapper {
+    private static bool TryReadDefaultValue(PARAMDESC paramDesc, out object? defaultValue) {
+        defaultValue = null;
+        if ((paramDesc.wParamFlags & PARAMFLAG.PARAMFLAG_FHASDEFAULT) == 0 || paramDesc.lpVarValue == IntPtr.Zero)
+            return false;
+
+        // PARAMDESCEX: ULONG cBytes (4 bajty + 4 bajty wyrównania) + VARIANTARG varDefaultValue (offset 8)
+        nint pVariant = paramDesc.lpVarValue + 8;
+        ushort vt = unchecked((ushort)Marshal.ReadInt16(pVariant));
+        if (vt == (ushort)VarEnum.VT_ERROR && Marshal.ReadInt32(pVariant, 8) == unchecked((int)0x80020004)) {
+            defaultValue = Type.Missing;
+            return true;
+        }
+
+        object? managed = Marshal.GetObjectForNativeVariant(pVariant);
+        defaultValue = managed is DBNull ? null : managed;
+        return true;
+    }
+
     private FuncModel ReadMethod(ITypeInfo typeInfo, FUNCDESC descriptor, string name,
         string[] names, int nameCount) {
         var method = new FuncModel {
@@ -37,10 +55,11 @@ public partial class UiaAdapterWrapper {
                 while (!usedParamNames.Add(parameterName))
                     parameterName += "_";
             }
+            bool hasDefault = TryReadDefaultValue(parameter.desc.paramdesc, out object? defaultValue);
             PARAMFLAG flags = parameter.desc.paramdesc.wParamFlags;
             bool descriptorOptional = descriptor.cParamsOpt > 0 && index >= descriptor.cParams - descriptor.cParamsOpt;
             bool isOptional = descriptorOptional || (flags & (PARAMFLAG.PARAMFLAG_FOPT | PARAMFLAG.PARAMFLAG_FHASDEFAULT)) != 0;
-            method.Params.Add((parameterName, rawType, isOptional));
+            method.Params.Add(new ParamModel(parameterName, rawType, isOptional, hasDefault, defaultValue));
         }
         return method;
     }

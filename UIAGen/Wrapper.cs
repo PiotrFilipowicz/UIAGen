@@ -116,6 +116,13 @@ public partial class UiaAdapterWrapper {
     };
 
     private static readonly HashSet<string> AdobeObjectsSignatureMethods = new(StringComparer.OrdinalIgnoreCase) {
+        "Count",
+        "Add",
+        "Remove",
+        "ItemByID",
+        "ItemByRange",
+        "AnyItem",
+
         "FirstItem",
         "LastItem",
         "MiddleItem",

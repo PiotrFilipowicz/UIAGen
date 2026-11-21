@@ -442,7 +442,10 @@ public static unsafe class ComInvoker {
 
             int rawCount = args?.Length ?? 0;
             if (!isPut && rawCount > 0) {
-                while (rawCount > 0 && (args![rawCount - 1] == null || args[rawCount - 1] == global::System.Type.Missing)) {
+                while (rawCount > 0 && (
+                    args![rawCount - 1] == null ||
+                    args[rawCount - 1] == global::System.Type.Missing ||
+                    args[rawCount - 1] is IComVariantValue { IsMissing: true })) {
                     rawCount--;
                 }
             }

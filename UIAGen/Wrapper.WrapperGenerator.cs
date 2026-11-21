@@ -12,9 +12,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 
 namespace UiaAdapter;
 
@@ -416,7 +418,16 @@ public class {{safeTypeName}}{{inheritance}} {
             List<string> declParams = new();
             List<string> passParamsLate = new();
 
-            foreach (var (pName, pRawType, _) in fn.Params) {
+            int lastRequiredIndex = -1;
+            for (int i = 0; i < fn.Params.Count; i++) {
+                if (!fn.Params[i].IsOptional)
+                    lastRequiredIndex = i;
+            }
+
+            for (int i = 0; i < fn.Params.Count; i++) {
+                var (pName, pRawType, isOptional, hasDefault, defaultValue) = fn.Params[i];
+                bool canEmitDefault = isOptional && i > lastRequiredIndex;
+
                 string pWrapType = GetCanonicalTypeName(ResolveWrapperTypeName(pRawType, pName));
                 string cleanPWrapType = pWrapType.TrimEnd('?');
                 string cleanPWrapNoGlobal = cleanPWrapType.StartsWith("global::", StringComparison.Ordinal)
@@ -428,19 +439,40 @@ public class {{safeTypeName}}{{inheritance}} {
                     : KnownEnums.Contains(cleanPWrapType);
 
                 if (pRawType == "void" || cleanPWrapType == "void") {
-                    declParams.Add($"object? {pName} = default");
+                    declParams.Add(canEmitDefault ? $"object? {pName} = default" : $"object? {pName}");
                 }
                 else if (isParamEnum) {
-                    declParams.Add($"{QualifyType(cleanPWrapType)}? {pName} = null");
+                    string qualified = QualifyType(cleanPWrapType);
+                    if (canEmitDefault) {
+                        string defaultLiteral = FormatEnumDefaultLiteral(hasDefault, defaultValue, qualified);
+                        declParams.Add($"{qualified}? {pName} = {defaultLiteral}");
+                    }
+                    else {
+                        declParams.Add(isOptional ? $"{qualified}? {pName}" : $"{qualified} {pName}");
+                    }
                 }
                 else if (pRawType == "string" || pName.Equals("VersionComments", StringComparison.OrdinalIgnoreCase)) {
-                    declParams.Add($"string? {pName} = null");
+                    if (canEmitDefault) {
+                        string defaultLiteral = FormatStringDefaultLiteral(hasDefault, defaultValue);
+                        declParams.Add($"string? {pName} = {defaultLiteral}");
+                    }
+                    else {
+                        declParams.Add($"string? {pName}");
+                    }
                 }
                 else if (IsPrimitiveType(cleanPWrapType)) {
-                    declParams.Add($"{QualifyType(cleanPWrapType)}? {pName} = null");
+                    string qualified = QualifyType(cleanPWrapType);
+                    if (canEmitDefault) {
+                        string defaultLiteral = FormatPrimitiveDefaultLiteral(hasDefault, defaultValue, cleanPWrapType);
+                        declParams.Add($"{qualified}? {pName} = {defaultLiteral}");
+                    }
+                    else {
+                        declParams.Add(isOptional ? $"{qualified}? {pName}" : $"{qualified} {pName}");
+                    }
                 }
                 else {
-                    declParams.Add($"{QualifyType(cleanPWrapType)}? {pName} = default");
+                    string qualified = QualifyType(cleanPWrapType);
+                    declParams.Add(canEmitDefault ? $"{qualified}? {pName} = default" : $"{qualified}? {pName}");
                 }
 
                 passParamsLate.Add(pName);
@@ -494,6 +526,139 @@ public class {{safeTypeName}}{{inheritance}} {
         }
 
         """);
+    }
+
+    private static string FormatEnumDefaultLiteral(bool hasDefault, object? defaultValue, string qualifiedEnumType) {
+        if (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
+            return "null";
+
+        try {
+            long rawLong = Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture);
+            int enumValue = unchecked((int)rawLong);
+            string valueText = enumValue < 0
+                ? $"({enumValue.ToString(CultureInfo.InvariantCulture)})"
+                : enumValue.ToString(CultureInfo.InvariantCulture);
+            return $"({qualifiedEnumType}){valueText}";
+        }
+        catch {
+            return "null";
+        }
+    }
+
+    private static string FormatStringDefaultLiteral(bool hasDefault, object? defaultValue) {
+        if (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
+            return "null";
+
+        if (defaultValue is not string text)
+            return "null";
+
+        var sb = new StringBuilder(text.Length + 2);
+        sb.Append('"');
+        foreach (char ch in text) {
+            switch (ch) {
+                case '\\':
+                    sb.Append("\\\\");
+                    break;
+                case '"':
+                    sb.Append("\\\"");
+                    break;
+                case '\0':
+                    sb.Append("\\0");
+                    break;
+                case '\a':
+                    sb.Append("\\a");
+                    break;
+                case '\b':
+                    sb.Append("\\b");
+                    break;
+                case '\f':
+                    sb.Append("\\f");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                case '\v':
+                    sb.Append("\\v");
+                    break;
+                default:
+                    if (char.IsControl(ch) || char.IsSurrogate(ch))
+                        sb.Append($"\\u{(int)ch:X4}");
+                    else
+                        sb.Append(ch);
+                    break;
+            }
+        }
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    private static string FormatPrimitiveDefaultLiteral(bool hasDefault, object? defaultValue, string primitiveType) {
+        if (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
+            return "null";
+
+        try {
+            switch (primitiveType) {
+                case "bool":
+                    return Convert.ToBoolean(defaultValue, CultureInfo.InvariantCulture) ? "true" : "false";
+                case "byte":
+                    return $"(byte){Convert.ToByte(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
+                case "sbyte": {
+                    sbyte v = Convert.ToSByte(defaultValue, CultureInfo.InvariantCulture);
+                    return v < 0
+                        ? $"(sbyte)({v.ToString(CultureInfo.InvariantCulture)})"
+                        : $"(sbyte){v.ToString(CultureInfo.InvariantCulture)}";
+                }
+                case "short": {
+                    short v = Convert.ToInt16(defaultValue, CultureInfo.InvariantCulture);
+                    return v < 0
+                        ? $"(short)({v.ToString(CultureInfo.InvariantCulture)})"
+                        : $"(short){v.ToString(CultureInfo.InvariantCulture)}";
+                }
+                case "ushort":
+                    return $"(ushort){Convert.ToUInt16(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
+                case "int":
+                    return Convert.ToInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
+                case "uint":
+                    return Convert.ToUInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "u";
+                case "long":
+                    return Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "L";
+                case "ulong":
+                    return Convert.ToUInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "UL";
+                case "float": {
+                    float v = Convert.ToSingle(defaultValue, CultureInfo.InvariantCulture);
+                    if (float.IsNaN(v))
+                        return "float.NaN";
+                    if (float.IsPositiveInfinity(v))
+                        return "float.PositiveInfinity";
+                    if (float.IsNegativeInfinity(v))
+                        return "float.NegativeInfinity";
+                    return v.ToString("R", CultureInfo.InvariantCulture) + "f";
+                }
+                case "double": {
+                    double v = Convert.ToDouble(defaultValue, CultureInfo.InvariantCulture);
+                    if (double.IsNaN(v))
+                        return "double.NaN";
+                    if (double.IsPositiveInfinity(v))
+                        return "double.PositiveInfinity";
+                    if (double.IsNegativeInfinity(v))
+                        return "double.NegativeInfinity";
+                    return v.ToString("R", CultureInfo.InvariantCulture) + "d";
+                }
+                case "decimal":
+                    return Convert.ToDecimal(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "m";
+                default:
+                    return "null";
+            }
+        }
+        catch {
+            return "null";
+        }
     }
 
     private string GetCanonicalTypeName(string typeName) => CanonicalTypeNames.Resolve(
