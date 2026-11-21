@@ -27,6 +27,36 @@ Choose the wrapper that matches the actual COM object. The conversion selects th
 
 ## Architecture
 
+### Layered architecture
+
+`UIAGen` separates binary COM metadata analysis from static C# emission, deterministic lifetime management, and debugger inspection across five stages:
+
+1. **Metadata extraction and indexing (`TlbResolver`, `TypeLibDependencyScanner`, `Wrapper.PreScan`, `TypeInfoDescriptor`):** Loads binary `ITypeLib` and `ITypeInfo` metadata directly through OLE Automation without .NET reflection or PIAs. Native `TYPEATTR`, `FUNCDESC`, and `VARDESC` structures are acquired and released deterministically via `TypeInfoDescriptor`. The scanner classifies enums, interfaces/dispinterfaces, and coclasses, resolves cross-library references (such as `stdole`, `MSO.DLL`, or `MSForms`), and detects collection patterns—including Adobe's `Objects` container.
+2. **Type resolution and canonicalization (`CanonicalTypeNames`, `Wrapper.TypeResolver`):** Maps raw `TYPEDESC` / `VARENUM` types (`BSTR`, `VARIANT`, `VARIANT_BOOL`, `SAFEARRAY`, `DATE`, `CURRENCY`, interface pointers) into canonical C# types and resolves collection element types (`TItem`) using plural-to-singular rules and application-specific overrides.
+3. **Static C# code generation (`Wrapper.WrapperGenerator`, `Wrapper.Emit.Objects`):** Emits flat, statically typed wrapper classes with compile-time `DISPID` constants for early invocation, reserving `ComProxy` / untyped `Objects` for polymorphic or unspecified COM boundaries. The generated code avoids `System.Reflection.Emit`, `dynamic`, and built-in runtime RCW/CCW generation so it remains compatible with Native AOT and trimming.
+4. **Deterministic lifecycle management (`ComStub`, `ComBehavior`, `Tracker`, `ComInvoker`):** Manages native `IDispatch` / `IUnknown` pointers explicitly and supports scoped LIFO reference cleanup through checkpoints (`GetCheckPoint()` / `MoveCheckPoint(int)`), avoiding reliance on the GC finalizer thread to release out-of-process COM servers.
+5. **Developer ergonomics and debugger inspection (`ComProxyDebugView`, `GetDebuggerProperties`, `ReadDebuggerProperty`):** Exposes generated metadata and a single indexed property switch per wrapper so Visual Studio debugger windows inspect COM properties without per-property delegate allocations, while excluding expensive or state-mutating properties from automatic evaluation.
+
+### Wrapper inheritance hierarchy
+
+Generated adapters and runtime base classes follow a single inheritance hierarchy rooted at `ComStub`:
+
+```text
+ComStub (IDisposable, IComWrapper)
+└── ComProxy (IComBindingState)
+    ├── <Generated COM wrappers> (e.g. Document, Workbook, Story)
+    └── ComProxies (IEnumerable<ComProxy>)
+        ├── ComProxies<TItem> (IEnumerable<TItem>)
+        └── Objects (Adobe adapters, IEnumerable<ComProxy>)
+            └── Objects<TItem> (Adobe adapters, IEnumerable<TItem>)
+```
+
+- **`ComStub`**: Owns the native `ComPointer` (`IntPtr`) and the associated `IComBehavior? ComBehavior`. When constructed from an `IntPtr`, it queries for `IID_IDispatch` (falling back to `AddRef` on the pointer if `QueryInterface` does not return `IDispatch`); when constructed from an `IComWrapper`, it calls `AddRef` on `wrapper.ComPointer`; otherwise it acquires `IDispatch` via `ComStubOps.GetIDispatch`. `Dispose()` releases `ComPointer` via `ComStubOps.Release` and suppresses finalization.
+- **`ComProxy`**: Inherits `ComStub` and implements `IComBindingState`. It adds dispatch invocation helpers (`GetValue`, `InvokeValue`, `GetWrapper`, `InvokeWrapper`, `Set`, `SetRef`, `SetAuto`, `InvokeVoid`), binding state (`IsPoly`, `ForceLateInvoke` / `IsLate`), missing-object sentinel state (`IsMissing`, `Found`, `IsCreated`, `Missing()`, `Missing<T>()`), scalar/array `Value` storage, pointer-based equality (`==`, `Equals`, `GetHashCode`), `Wrap<TWrapper>()`, `Unwrap()`, and debugger inspection (`GetDebuggerProperties()`, `ReadDebuggerProperty(int)`, `_DynamicDisplay`). All generated non-collection COM wrappers inherit from `ComProxy` (or generated base classes that inherit from `ComProxy`).
+- **`ComProxies`**: Inherits `ComProxy` and implements `IEnumerable<ComProxy>`. It models untyped COM collections, providing `Count`, `_NewEnum` (`DISPID -4`) / `IEnumVARIANT` enumeration with 1-based indexed fallback, and `ComProxiesUntypedDebugView`.
+- **`ComProxies<TItem>`**: Inherits `ComProxies` and implements `IEnumerable<TItem>` (where `TItem : class`). It exposes statically typed indexers (`this[object]`, `this[int]`, `this[string]`, `this[object row, object column]`), `Item(...)`, `TryGetValue`, `Exists`, and typed enumeration, wrapping returned elements with `ComObjectExtensions.As<TItem>` (or converting to `string` when `TItem` is `string`) while propagating `ComBehavior` and `ForceLateInvoke`.
+- **`Objects` and `Objects<TItem>`** (Adobe adapters): `Objects` inherits `ComProxies`, and typed Adobe collections inherit `Objects<TItem>` (which inherits `Objects`). This preserves the `ComProxies` / `ComProxy` / `ComStub` contract while adding Adobe-specific collection behavior such as `ItemByRange` returning `Objects` and `Add` signatures where declared by the type library.
+
 ### Wrapper binding and invocation
 
 **Wrapper binding** determines which managed type represents a COM object. **Invocation** determines how the runtime obtains the dispatch identifier (`DISPID`) for a COM member. Both early and late invocation ultimately call `IDispatch::Invoke`; a typed wrapper does not require early invocation, and casting to a wrapper does not set `IsPoly` by itself.
