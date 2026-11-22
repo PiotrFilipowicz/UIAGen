@@ -71,11 +71,17 @@ string bookmarkName = bookmarks["UiaTestBookmark"].Name;
 doc.Close(WdSaveOptions.wdDoNotSaveChanges);
 app.Quit(WdSaveOptions.wdDoNotSaveChanges);
 ```
+IntelliSense in UIA
+
 ![IntelliSense in UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/IntelliSense.png)
 
-![QuickWatch Window for UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/QuickWatchUIA.png) 
+QuickWatch Window in UIA
 
-![QuickWatch Window for PIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/QuickWatchPIA.png)
+![QuickWatch Window in UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/QuickWatchUIA.png) 
+
+QuickWatch Window in PIA
+
+![QuickWatch Window in PIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/QuickWatchPIA.png)
 
 Size of Adobe UIA Adapter of 41 libraries is 4.73 MB
 Size of AutoCAD UIA Adapter of 22 libraries is 2.26 MB
