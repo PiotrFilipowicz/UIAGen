@@ -71,7 +71,7 @@ string bookmarkName = bookmarks["UiaTestBookmark"].Name;
 doc.Close(WdSaveOptions.wdDoNotSaveChanges);
 app.Quit(WdSaveOptions.wdDoNotSaveChanges);
 ```
-![IntelliSense in UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/IntelliSenseUIA.png)
+![IntelliSense in UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/IntelliSense.png)
 
 ![QuickWatch Window for UIA](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/QuickWatchUIA.png) 
 
