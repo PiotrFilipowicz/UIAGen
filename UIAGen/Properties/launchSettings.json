@@ -2,7 +2,7 @@
   "profiles": {
     "UIAGen": {
       "commandName": "Project",
-      "commandLineArgs": "InDesign.Application ./InDesignUIA InDesignAdapter"
+      "commandLineArgs": "-adobe -list"
     }
   }
 }

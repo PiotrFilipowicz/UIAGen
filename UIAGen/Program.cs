@@ -13,6 +13,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Reflection;
 
 using static UiaAdapter.ProgramHelpers;
@@ -50,6 +51,21 @@ internal static class Program {
         Console.WriteLine("       -v, --version: Display the tool version.");
     }
 
+    static void AllWithFilters(string outputFolder, string[] folderFilters, string adapterName, bool listOnly, bool compile) {
+            if (!GenerateAllAdapters(
+                outputFolder,
+                combinedAdapterName: adapterName,
+                folderFilters: folderFilters,
+                listOnly: listOnly,
+                compile: compile)) {
+                Environment.ExitCode = 1;
+                return;
+            }
+            if (!listOnly)
+                Console.WriteLine($"Adapter generated successfully: {adapterName} in {outputFolder}");
+            return;
+    }
+
     private static void Run(string[] args) {
         if (args.Length < 1) {
             PrintCliUsage("Error: Expected at least 1 argument.");
@@ -68,6 +84,12 @@ internal static class Program {
         bool compile = false;
         string[] folderFilters = [];
         var positional = new List<string>();
+
+        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+
+ 
 
         for (int i = 0; i < args.Length; i++) {
             string current = args[i].Trim();
@@ -160,6 +182,7 @@ internal static class Program {
             return;
         }
 
+        int posIndex;
         // 4. Execute -all mode
         if (modeAll) {
             if (positional.Count > 1) {
@@ -189,10 +212,10 @@ internal static class Program {
 
         // 6. Execute -acad mode (filtered registry discovery combined into one adapter)
         if (modeAcad) {
-            int acadPosIndex = 0;
+            posIndex = 0;
             string? acadOutputFolder = null;
-            if (acadPosIndex < positional.Count) {
-                acadOutputFolder = Path.GetFullPath(positional[acadPosIndex++]);
+            if (posIndex < positional.Count) {
+                acadOutputFolder = Path.GetFullPath(positional[posIndex++]);
             }
             else if (!listOnly) {
                 PrintCliUsage("Error: Missing outputFolder argument.");
@@ -201,19 +224,21 @@ internal static class Program {
             }
 
             string acadAdapterName = "AutoCADAdapter";
-            if (acadPosIndex < positional.Count) {
-                acadAdapterName = positional[acadPosIndex++];
+            if (posIndex < positional.Count) {
+                acadAdapterName = positional[posIndex++];
             }
 
-            if (acadPosIndex < positional.Count) {
-                PrintCliUsage($"Error: Unexpected positional argument '{positional[acadPosIndex]}'.");
+            if (posIndex < positional.Count) {
+                PrintCliUsage($"Error: Unexpected positional argument '{positional[posIndex]}'.");
                 Environment.ExitCode = 2;
                 return;
             }
 
             string[] acadFilters = [
-                @"C:\Program Files\Autodesk",
-                @"C:\Program Files\Common Files\Autodesk Shared"
+                $@"{programFiles}\Autodesk",
+                $@"{programFilesX86}\Autodesk",
+                $@"{programFiles}\Common Files\Autodesk Shared",
+                $@"{programFilesX86}\Common Files\Autodesk Shared"
             ];
 
             if (!GenerateAllAdapters(
@@ -232,10 +257,57 @@ internal static class Program {
             return;
         }
 
+        // 6. Execute -adobe mode (filtered registry discovery combined into one adapter)
+        if (modeAdobe) {
+            posIndex = 0;
+            string? adobeOutputFolder = null;
+            if (posIndex < positional.Count) {
+                adobeOutputFolder = Path.GetFullPath(positional[posIndex++]);
+            }
+            else if (!listOnly) {
+                PrintCliUsage("Error: Missing outputFolder argument.");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            string adobeAdapterName = "AdobeAdapter";
+            if (posIndex < positional.Count) {
+                adobeAdapterName = positional[posIndex++];
+            }
+
+            if (posIndex < positional.Count) {
+                PrintCliUsage($"Error: Unexpected positional argument '{positional[posIndex]}'.");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            string[] adobeFilters = [
+                $@"{programFiles}\Adobe",
+                $@"{programFilesX86}\Adobe",
+                $@"{programFiles}\Common Files\Adobe",
+                $@"{programFilesX86}\Common Files\Adobe"
+            ];
+
+            if (!GenerateAllAdapters(
+                adobeOutputFolder,
+                combinedAdapterName: adobeAdapterName,
+                folderFilters: adobeFilters,
+                listOnly: listOnly,
+                compile: compile)) {
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            if (!listOnly) {
+                Console.WriteLine($"Adapter generated successfully: {adobeAdapterName} in {adobeOutputFolder}");
+            }
+            return;
+        }
+
         // 7. Execute explicit module list / -mso / -adobe mode
         string[] modules;
         string? defaultAdapterName = null;
-        int posIndex = 0;
+        posIndex = 0;
 
         if (modeMso) {
             modules = [
@@ -246,14 +318,6 @@ internal static class Program {
                 "Outlook.Application"
             ];
             defaultAdapterName = "MSOfficeAdapter";
-        }
-        else if (modeAdobe) {
-            modules = [
-                "InCopy.Application",
-                "InDesign.Application",
-                "Photoshop.Application"
-            ];
-            defaultAdapterName = "AdobeAdapter";
         }
         else {
             if (positional.Count < 1) {
