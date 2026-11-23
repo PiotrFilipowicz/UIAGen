@@ -87,8 +87,7 @@ public unsafe class ComStub : IDisposable, IComWrapper {
 
 [DebuggerDisplay("{DbgInfoOfValue(),nq}", Name = "{DbgInfoOfName(),nq}")]
 public partial class ComProxy : ComStub, IComBindingState {
-    private static readonly string[] DbgNameProperties = ["Name", "NameLocal", "CommandName", "Title"];
-    private static readonly string[] DbgValueProperties = ["Index"];
+    private static readonly string[] DbgValueProperties = ["Name", "CommandName", "Title", "ID", "Id"];
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public object? Value { get; }
     public bool IsPoly { get; set; }
@@ -142,47 +141,55 @@ public partial class ComProxy : ComStub, IComBindingState {
         }
     }
 
-    protected internal virtual string DbgInfoOfName() {
-        string typeName = GetType().Name;
-        if (_missing || ComPointer == IntPtr.Zero)
-            return typeName;
-
-        foreach (string propertyName in DbgNameProperties) {
-            if (TryGetDbgProperty(propertyName, out object? value) && TryFormatDbgProperty(value, out string text))
-                return $"{typeName} [{propertyName} = {text}]";
-        }
-
-        return typeName;
-    }
+    protected internal virtual string DbgInfoOfName() => GetType().Name;
 
     protected internal virtual string DbgInfoOfValue() {
-        string valueInfo = DebuggerDisplay;
-        if (_missing || Value != null || ComPointer == IntPtr.Zero)
-            return valueInfo;
+        if (_missing || Value != null || ComPointer == IntPtr.Zero || IsLate)
+            return DebuggerDisplay;
 
-        var properties = new global::System.Collections.Generic.List<string>(3);
         foreach (string propertyName in DbgValueProperties) {
-            if (TryGetDbgProperty(propertyName, out object? value) && TryFormatDbgProperty(value, out string text))
-                properties.Add($"{propertyName} = {text}");
+            if (TryGetDbgProperty(propertyName, out string actualName, out object? value) &&
+                TryFormatDbgProperty(value, out string text)) {
+                return $"{actualName}: {text}";
+            }
         }
 
-        return properties.Count == 0
-            ? valueInfo
-            : $"{valueInfo}; {string.Join(", ", properties)}";
+        return DebuggerDisplay;
     }
 
     protected internal virtual string DbgInfoOfType() => _dbgTypeInfo;
 
-    private bool TryGetDbgProperty(string propertyName, out object? value) {
+    private bool TryGetDbgProperty(string propertyName, out object? value) =>
+        TryGetDbgProperty(propertyName, out _, out value);
+
+    private bool TryGetDbgProperty(string propertyName, out string actualName, out object? value) {
+        actualName = propertyName;
         value = null;
         try {
             ComGeneratedMember[] members = GetDebuggerProperties();
-            for (int index = 0; index < members.Length; index++) {
-                ComGeneratedMember member = members[index];
-                if (member.IsBlocked || !member.Name.Equals(propertyName, global::System.StringComparison.OrdinalIgnoreCase))
-                    continue;
-                value = ReadDebuggerProperty(member.Index);
-                return true;
+            if (members.Length > 0) {
+                for (int index = 0; index < members.Length; index++) {
+                    ComGeneratedMember member = members[index];
+                    if (!member.Name.Equals(propertyName, global::System.StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (member.IsBlocked)
+                        return false;
+                    actualName = member.Name;
+                    value = ReadDebuggerProperty(member.Index);
+                    return true;
+                }
+                return false;
+            }
+
+            if (ComBehavior != null) {
+                value = ComInvoker.GetDynamicValue(
+                    this,
+                    propertyName,
+                    ComBehavior.InvocationMode,
+                    forceLateInvoke: true,
+                    knownDispId: -1,
+                    typeKey: string.Empty);
+                return value is not null and not ComProxy { IsMissing: true };
             }
         }
         catch { }
@@ -524,7 +531,7 @@ public class ComProxies<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTyp
     }
 
     public new TItem Item(object index) => this[index];
-    
+
     public new TItem Item(object row, object column) => this[row, column];
 
     public bool TryGetValue(object index, out TItem item) {
@@ -538,6 +545,17 @@ public class ComProxies<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTyp
             return false;
         try { _ = this[index]; return true; }
         catch { return false; }
+    }
+
+    internal override object? WrapCollectionItem(object? rawItem) {
+        if (rawItem == null || rawItem is ComProxy { IsMissing: true })
+            return ComProxy.Missing<TItem>();
+        if (typeof(TItem) == typeof(string))
+            return rawItem.ToString() ?? string.Empty;
+        var item = ComObjectExtensions.As<TItem>(rawItem);
+        InheritTracker(item);
+        if (ForceLateInvoke && item is ComProxy asComProxy) { asComProxy.ForceLateInvoke = true; }
+        return item;
     }
 
     public new IEnumerator<TItem> GetEnumerator() {
@@ -658,18 +676,39 @@ internal sealed class ComProxyDebugView {
     public DynamicComTree _DynamicDisplay => _target._DynamicDisplay;
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComGeneratedPropertyNode[] Properties => CreateGeneratedPropertyNodes(_target);
+    public object[] Properties => CreateGeneratedPropertyNodes(_target);
 
-    internal static ComGeneratedPropertyNode[] CreateGeneratedPropertyNodes(ComProxy target) {
+    internal static object[] CreateGeneratedPropertyNodes(ComProxy target) {
         if (target == null || target.IsMissing || target.ComPointer == IntPtr.Zero)
-            return Array.Empty<ComGeneratedPropertyNode>();
+            return Array.Empty<object>();
 
         ComGeneratedMember[] members = target.GetDebuggerProperties();
         Array.Sort(members, static (left, right) => global::System.StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name));
-        var nodes = new ComGeneratedPropertyNode[members.Length];
-        for (int index = 0; index < members.Length; index++)
-            nodes[index] = new ComGeneratedPropertyNode(target, members[index]);
+        var nodes = new object[members.Length];
+        for (int index = 0; index < members.Length; index++) {
+            var node = new ComGeneratedPropertyNode(target, members[index]);
+            object? val = node.Value;
+            nodes[index] = ComCollectionItemNode.IsScalar(val)
+                ? new ComGeneratedScalarPropertyNode(node.Name, val, node.TypeName)
+                : node;
+        }
         return nodes;
+    }
+}
+
+[DebuggerDisplay("{_value}", Name = "{_name,nq}", Type = "{_typeName,nq}")]
+internal sealed class ComGeneratedScalarPropertyNode {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _name;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly object? _value;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _typeName;
+
+    public ComGeneratedScalarPropertyNode(string name, object? value, string typeName) {
+        _name = name;
+        _value = value;
+        _typeName = typeName;
     }
 }
 
@@ -733,9 +772,11 @@ internal sealed class ComGeneratedPropertyNode {
             }
         }
         catch {
-            _value = new ComProxy(new object()) { _missing = true, _blockedMessage = "Unavailable in the debugger preview" };
             _invoking = ComInvoker.InvocationContext.LastPathLabel;
-            ((ComProxy)_value)._dbgTypeInfo = _invoking;
+            var fallback = ComProxy.Missing();
+            fallback._blockedMessage = "Unavailable in the debugger preview";
+            fallback._dbgTypeInfo = _invoking;
+            _value = fallback;
         }
     }
 
@@ -778,51 +819,52 @@ internal class DynamicComTreeDebugView {
     }
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComPropertyNode[] Properties {
+    public object[] Properties {
         get {
             var target = _tree.Target;
             if (target == null || target.IsMissing || target.ComPointer == IntPtr.Zero)
-                return Array.Empty<ComPropertyNode>();
+                return Array.Empty<object>();
 
             try {
                 string[] names = target.GetDebuggerMemberNames();
                 Array.Sort(names, global::System.StringComparer.OrdinalIgnoreCase);
-                var list = new global::System.Collections.Generic.List<ComPropertyNode>(names.Length);
+                var list = new global::System.Collections.Generic.List<object>(names.Length);
 
                 foreach (string name in names) {
                     if (name != "QueryInterface" && name != "AddRef" && name != "Release" &&
                         name != "GetTypeInfoCount" && name != "GetTypeInfo" && name != "GetIDsOfNames" && name != "Invoke") {
-                        list.Add(new ComPropertyNode(target, name));
+                        var node = new ComPropertyNode(target, name);
+                        object? val = node.DebuggerValue;
+                        list.Add(ComCollectionItemNode.IsScalar(val)
+                            ? new ComScalarPropertyNode(name, val, node.TypeName)
+                            : node);
                     }
                 }
                 return list.ToArray();
             }
             catch {
-                return Array.Empty<ComPropertyNode>();
+                return Array.Empty<object>();
             }
         }
     }
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComCollectionItemNode[] CollectionItems {
-        get {
-            if (_tree.Target is not ComProxies collection || collection.IsMissing || collection.ComPointer == IntPtr.Zero)
-                return Array.Empty<ComCollectionItemNode>();
+    public object[] CollectionItems => ComCollectionItemNode.CreateItems(_tree.Target as ComProxies, forceLateInvoke: true);
+}
 
-            try {
-                object rawCount = ComInvoker.GetDynamicValue(collection, "Count", collection.ComBehavior.InvocationMode, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty);
-                int count = global::System.Convert.ToInt32(rawCount, global::System.Globalization.CultureInfo.InvariantCulture);
-                int displayedCount = global::System.Math.Min(global::System.Math.Max(0, count), CollectionDebuggerDisplay.ElementsLimit);
-                var items = new ComCollectionItemNode[displayedCount];
-                for (int index = 1; index <= displayedCount; index++)
-                    items[index - 1] = new ComCollectionItemNode(collection, index, forceLateInvoke: true);
+[DebuggerDisplay("{_value}", Name = "{_name,nq}", Type = "{_typeName,nq} [late]")]
+internal sealed class ComScalarPropertyNode {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _name;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly object? _value;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _typeName;
 
-                return items;
-            }
-            catch {
-                return Array.Empty<ComCollectionItemNode>();
-            }
-        }
+    public ComScalarPropertyNode(string name, object? value, string typeName) {
+        _name = name;
+        _value = value;
+        _typeName = typeName;
     }
 }
 
@@ -899,7 +941,10 @@ internal class ComPropertyNode {
             return _value;
         }
         catch {
-            return _value = new ComProxy(new object()) { _missing = true, _blockedMessage = "Unavailable in the debugger preview" };
+            var fallback = ComProxy.Missing();
+            fallback._blockedMessage = "Unavailable in the debugger preview";
+            fallback._dbgTypeInfo = ComInvoker.InvocationContext.LastPathLabel;
+            return _value = fallback;
         }
     }
 }
@@ -929,23 +974,10 @@ internal class ComProxiesUntypedDebugView {
     public DynamicComTree _DynamicDisplay => _collection._DynamicDisplay;
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComGeneratedPropertyNode[] Properties => ComProxyDebugView.CreateGeneratedPropertyNodes(_collection);
+    public object[] Properties => ComProxyDebugView.CreateGeneratedPropertyNodes(_collection);
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComCollectionItemNode[] Items {
-        get {
-            if (_collection == null || _collection._missing)
-                return Array.Empty<ComCollectionItemNode>();
-            try {
-                int count = global::System.Math.Min(_collection.Count, CollectionDebuggerDisplay.ElementsLimit);
-                var items = new ComCollectionItemNode[global::System.Math.Max(0, count)];
-                for (int index = 1; index <= count; index++)
-                    items[index - 1] = new ComCollectionItemNode(_collection, index, forceLateInvoke: false);
-                return items;
-            }
-            catch { return Array.Empty<ComCollectionItemNode>(); }
-        }
-    }
+    public object[] Items => ComCollectionItemNode.CreateItems(_collection, forceLateInvoke: false);
 }
 
 [DebuggerTypeProxy(typeof(ComProxiesUntypedDebugView))]
@@ -953,6 +985,18 @@ internal class ComProxiesUntypedDebugView {
 public class ComProxies : ComProxy, IEnumerable<ComProxy> {
     public ComProxies(object comInstance) : base(comInstance) { }
     public virtual int Count => GetValue<int>(nameof(Count), -1);
+
+    internal virtual object? WrapCollectionItem(object? rawItem) {
+        if (rawItem == null)
+            return Missing();
+        if (ComStubOps.IsComObject(rawItem) || rawItem is IComWrapper) {
+            var proxy = InheritTracker(ComObjectExtensions.ToComProxy(rawItem));
+            if (ForceLateInvoke)
+                proxy.ForceLateInvoke = true;
+            return proxy;
+        }
+        return rawItem;
+    }
 
     public IEnumerator<ComProxy> GetEnumerator() {
         object? rawEnum = null;
@@ -1018,35 +1062,380 @@ internal readonly struct DebugEntry<T> {
     }
 }
 
-[DebuggerDisplay("{Value}", Name = "{Name,nq}", Type = "{TypeName,nq}")]
+internal sealed class ComCollectionEnumCursor {
+    private readonly ComProxies _collection;
+    private readonly bool _forceLateInvoke;
+    private readonly global::System.Collections.Generic.Dictionary<int, (object? Item, string Invoking)> _cachedItems = new();
+    private ComPointerLease? _enumLease;
+    private string _invoking = ComInvoker.InvocationContext.Unknown;
+    private int _nextIndex = 1;
+    private bool _initialized;
+    private bool _enumUnsupported;
+    private bool _completed;
+
+    public ComCollectionEnumCursor(ComProxies collection, bool forceLateInvoke) {
+        _collection = collection;
+        _forceLateInvoke = forceLateInvoke;
+    }
+
+    public void EnsureRange(int startIndex, int endIndex) {
+        if (_enumUnsupported || endIndex < startIndex)
+            return;
+
+        int batchSize = _forceLateInvoke ? CollectionDebuggerDisplay.ReadBatchSizeDynamic : CollectionDebuggerDisplay.ReadBatchSize;
+        if (!_initialized && startIndex > batchSize) {
+            _enumUnsupported = true;
+            return;
+        }
+
+        bool needsReset = false;
+        for (int idx = startIndex; idx <= endIndex; idx++) {
+            if (idx < _nextIndex && !_cachedItems.ContainsKey(idx)) {
+                needsReset = true;
+                break;
+            }
+        }
+
+        if (needsReset)
+            Reset();
+
+        if (!_initialized) {
+            _initialized = true;
+            if (!TryOpenEnumerator()) {
+                _enumUnsupported = true;
+                return;
+            }
+        }
+
+        while (!_completed && _nextIndex <= endIndex && _enumLease != null) {
+            try {
+                if (!ComStubOps.TryEnumVariantNext<ComProxy>(_enumLease.ComPointer, out object? rawItem)) {
+                    _completed = true;
+                    _enumLease.Dispose();
+                    _enumLease = null;
+                    if (_nextIndex == 1)
+                        _enumUnsupported = true;
+                    break;
+                }
+
+                int currentIndex = _nextIndex++;
+                if (currentIndex >= startIndex) {
+                    if (rawItem is ComProxy rawProxy && rawProxy.ComBehavior == null)
+                        _collection.InheritTracker(rawProxy);
+                    object? wrapped = _collection.WrapCollectionItem(rawItem);
+                    if (wrapped is ComProxy proxy) {
+                        if (proxy.ComBehavior == null)
+                            _collection.InheritTracker(proxy);
+                        if (_forceLateInvoke || _collection.ForceLateInvoke)
+                            proxy.ForceLateInvoke = true;
+                    }
+                    string itemInvoking = ComCollectionItemNode.NormalizeInvokingLabel(_invoking, _forceLateInvoke);
+                    _cachedItems[currentIndex] = (wrapped, itemInvoking);
+                }
+                else {
+                    (rawItem as IDisposable)?.Dispose();
+                }
+            }
+            catch {
+                _completed = true;
+                _enumLease?.Dispose();
+                _enumLease = null;
+                if (_nextIndex == 1)
+                    _enumUnsupported = true;
+                break;
+            }
+        }
+    }
+
+    public bool TryGetItem(int index, out object? item, out string invoking) {
+        if (_cachedItems.TryGetValue(index, out var cached)) {
+            item = cached.Item;
+            invoking = cached.Invoking;
+            return true;
+        }
+
+        EnsureRange(index, index);
+        if (_cachedItems.TryGetValue(index, out cached)) {
+            item = cached.Item;
+            invoking = cached.Invoking;
+            return true;
+        }
+
+        item = null;
+        invoking = ComInvoker.InvocationContext.Unknown;
+        return false;
+    }
+
+    private void Reset() {
+        _enumLease?.Dispose();
+        _enumLease = null;
+        _initialized = false;
+        _completed = false;
+        _nextIndex = 1;
+    }
+
+    private bool TryOpenEnumerator() {
+        bool effectiveForceLate = _forceLateInvoke || _collection.ForceLateInvoke;
+        string typeKey = _forceLateInvoke ? string.Empty : _collection.TypeCacheKey;
+        object? rawEnum;
+        try {
+            rawEnum = ComInvoker.DirectInvoke(_collection, "_NewEnum", _collection.ComBehavior.InvocationMode, effectiveForceLate, -4, ComInvokeKind.PropertyGet, typeKey, null!);
+        }
+        catch {
+            return false;
+        }
+
+        _invoking = ComInvoker.InvocationContext.LastPathLabel;
+        if (rawEnum is not ComPointerLease lease)
+            return false;
+
+        try {
+            if (ComStubOps.QueryInterface(lease.ComPointer, in ComStubOps.IID_IEnumVARIANT, out IntPtr pEnumVariant) < 0 || pEnumVariant == IntPtr.Zero)
+                return false;
+
+            _enumLease = ComPointerLease.TakeOwnership(pEnumVariant);
+            return true;
+        }
+        finally {
+            lease.Dispose();
+        }
+    }
+}
+
+[DebuggerDisplay("{Summary,nq}", Name = "{Name,nq}", Type = "{TypeName,nq}")]
+internal sealed class ComCollectionGroupNode {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly ComProxies _collection;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly int _startIndex;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly int _endIndex;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly int _totalCount;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly bool _forceLateInvoke;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly ComCollectionEnumCursor? _cursor;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly object[]? _enumeratedItems;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private object[]? _children;
+
+    public ComCollectionGroupNode(ComProxies collection, int startIndex, int endIndex, bool forceLateInvoke, ComCollectionEnumCursor? cursor, int totalCount) {
+        _collection = collection;
+        _startIndex = startIndex;
+        _endIndex = endIndex;
+        _forceLateInvoke = forceLateInvoke;
+        _cursor = cursor;
+        _totalCount = totalCount;
+    }
+
+    internal ComCollectionGroupNode(ComProxies collection, object[] enumeratedItems, int startIndex, int endIndex) {
+        _collection = collection;
+        _enumeratedItems = enumeratedItems;
+        _startIndex = startIndex;
+        _endIndex = endIndex;
+        _totalCount = enumeratedItems.Length;
+    }
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    public string Name => $"[{_startIndex}..{_endIndex}]";
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    public string Summary => $"{_endIndex - _startIndex + 1} items";
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    public string TypeName => _collection.GetType().FullName ?? _collection.GetType().Name;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
+    public object[] Items => _children ??= _enumeratedItems != null
+        ? ComCollectionItemNode.CreateSlice(_collection, _enumeratedItems, _startIndex, _endIndex, _forceLateInvoke)
+        : ComCollectionItemNode.CreateRange(_collection, _startIndex, _endIndex, _forceLateInvoke, _cursor, _totalCount);
+}
+
+[DebuggerDisplay("{_value}", Name = "{_name,nq}", Type = "{_typeName,nq}")]
+internal sealed class ComCollectionScalarNode {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _name;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly object? _value;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _typeName;
+
+    public ComCollectionScalarNode(int index, object? value, string invoking) {
+        _name = $"[{index}]";
+        _value = value;
+        _typeName = $"{ComGeneratedPropertyNode.GetDebuggerTypeName(value)}{invoking}";
+    }
+}
+
+[DebuggerDisplay("{Value}", Name = "{_name,nq}", Type = "{TypeName,nq}")]
 internal sealed class ComCollectionItemNode {
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private readonly ComProxies _collection;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private readonly int _index;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly int _collectionCount;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private readonly bool _forceLateInvoke;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly ComCollectionEnumCursor? _cursor;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private readonly string _name;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private bool _evaluated;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private object? _value;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-    private string _name;
-    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string _invoking = ComInvoker.InvocationContext.Unknown;
 
-    public ComCollectionItemNode(ComProxies collection, int index, bool forceLateInvoke) {
+    public ComCollectionItemNode(ComProxies collection, int index, bool forceLateInvoke, ComCollectionEnumCursor? cursor = null, int collectionCount = int.MaxValue) {
         _collection = collection;
         _index = index;
         _forceLateInvoke = forceLateInvoke;
+        _cursor = cursor;
+        _collectionCount = collectionCount;
         _name = $"[{index}]";
     }
 
-    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-    public string Name {
-        get {
-            Evaluate();
-            return _name;
+    private ComCollectionItemNode(ComProxies collection, int index, bool forceLateInvoke, object? rawItem, string invoking, bool alreadyWrapped = false) {
+        _collection = collection;
+        _index = index;
+        _forceLateInvoke = forceLateInvoke;
+        _collectionCount = int.MaxValue;
+        _name = $"[{index}]";
+        _evaluated = true;
+        _invoking = NormalizeInvokingLabel(invoking, forceLateInvoke);
+        BindRawItem(rawItem, alreadyWrapped);
+    }
+
+    internal static object[] CreateItems(ComProxies? collection, bool forceLateInvoke) {
+        if (collection == null || collection._missing || collection.ComPointer == IntPtr.Zero)
+            return Array.Empty<object>();
+
+        var cursor = new ComCollectionEnumCursor(collection, forceLateInvoke);
+        try {
+            int rawCount = forceLateInvoke
+                ? global::System.Convert.ToInt32(
+                    ComInvoker.GetDynamicValue(collection, "Count", collection.ComBehavior.InvocationMode, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty),
+                    global::System.Globalization.CultureInfo.InvariantCulture)
+                : collection.Count;
+
+            if (rawCount <= 0)
+                return Array.Empty<object>();
+
+            return CreateRange(collection, 1, rawCount, forceLateInvoke, cursor, rawCount);
+        }
+        catch {
+            return TryCreateItemsFromEnumerator(collection, forceLateInvoke) ?? Array.Empty<object>();
+        }
+    }
+
+    internal static object[] CreateRange(ComProxies collection, int startIndex, int endIndex, bool forceLateInvoke, ComCollectionEnumCursor? cursor = null, int totalCount = -1) {
+        int count = endIndex - startIndex + 1;
+        if (count <= 0)
+            return Array.Empty<object>();
+
+        int resolvedTotal = totalCount > 0 ? totalCount : endIndex;
+        bool isDebugLate = forceLateInvoke || collection.IsLate;
+        int groupThreshold = isDebugLate ? CollectionDebuggerDisplay.GroupThresholdDynamic : CollectionDebuggerDisplay.GroupThreshold;
+        if (count <= groupThreshold) {
+            var items = new object[count];
+            for (int i = 0; i < count; i++) {
+                int index = startIndex + i;
+                items[i] = new ComCollectionItemNode(collection, index, forceLateInvoke, cursor, resolvedTotal);
+            }
+            return items;
+        }
+
+        int step = CalculateGroupStep(count, groupThreshold);
+        int groupCount = (count + step - 1) / step;
+        var groups = new object[groupCount];
+        for (int g = 0; g < groupCount; g++) {
+            int groupStart = startIndex + (g * step);
+            int groupEnd = global::System.Math.Min(endIndex, groupStart + step - 1);
+            groups[g] = new ComCollectionGroupNode(collection, groupStart, groupEnd, forceLateInvoke, cursor, resolvedTotal);
+        }
+        return groups;
+    }
+
+    internal static object[] CreateSlice(ComProxies collection, object[] allItems, int startIndex, int endIndex, bool forceLateInvoke = false) {
+        int count = endIndex - startIndex + 1;
+        if (count <= 0)
+            return Array.Empty<object>();
+
+        bool isDebugLate = forceLateInvoke || collection.IsLate;
+        int groupThreshold = isDebugLate ? CollectionDebuggerDisplay.GroupThresholdDynamic : CollectionDebuggerDisplay.GroupThreshold;
+        if (count <= groupThreshold) {
+            var items = new object[count];
+            for (int i = 0; i < count; i++)
+                items[i] = allItems[startIndex - 1 + i];
+            return items;
+        }
+
+        int step = CalculateGroupStep(count, groupThreshold);
+        int groupCount = (count + step - 1) / step;
+        var groups = new object[groupCount];
+        for (int g = 0; g < groupCount; g++) {
+            int groupStart = startIndex + (g * step);
+            int groupEnd = global::System.Math.Min(endIndex, groupStart + step - 1);
+            groups[g] = new ComCollectionGroupNode(collection, allItems, groupStart, groupEnd);
+        }
+        return groups;
+    }
+
+    private static int CalculateGroupStep(int count, int baseThreshold) {
+        int step = baseThreshold;
+        int factor = CollectionDebuggerDisplay.GroupFactor;
+        while (step <= int.MaxValue / factor &&
+               (count / step > factor || (count / step == factor && count % step != 0))) {
+            step *= factor;
+        }
+        return step;
+    }
+
+    private static object[]? TryCreateItemsFromEnumerator(ComProxies collection, bool forceLateInvoke) {
+        bool effectiveForceLate = forceLateInvoke || collection.ForceLateInvoke;
+        string typeKey = forceLateInvoke ? string.Empty : collection.TypeCacheKey;
+        object? rawEnum = null;
+        try {
+            rawEnum = ComInvoker.DirectInvoke(collection, "_NewEnum", collection.ComBehavior.InvocationMode, effectiveForceLate, -4, ComInvokeKind.PropertyGet, typeKey, null!);
+        }
+        catch {
+            return null;
+        }
+
+        string invoking = ComInvoker.InvocationContext.LastPathLabel;
+        if (rawEnum is not ComPointerLease enumLease)
+            return null;
+
+        IntPtr pEnumVariant = IntPtr.Zero;
+        try {
+            if (ComStubOps.QueryInterface(enumLease.ComPointer, in ComStubOps.IID_IEnumVARIANT, out pEnumVariant) < 0 || pEnumVariant == IntPtr.Zero)
+                return null;
+
+            var items = new global::System.Collections.Generic.List<object>();
+            while (ComStubOps.TryEnumVariantNext<ComProxy>(pEnumVariant, out object? rawItem)) {
+                int idx = items.Count + 1;
+                object? wrapped = collection.WrapCollectionItem(rawItem);
+                if (!IsExpandable(wrapped))
+                    items.Add(new ComCollectionScalarNode(idx, wrapped, invoking));
+                else
+                    items.Add(new ComCollectionItemNode(collection, idx, forceLateInvoke, rawItem, invoking));
+            }
+            if (items.Count == 0)
+                return null;
+
+            return CreateSlice(collection, items.ToArray(), 1, items.Count, forceLateInvoke);
+        }
+        catch {
+            return null;
+        }
+        finally {
+            if (pEnumVariant != IntPtr.Zero)
+                ComStubOps.Release(pEnumVariant);
+            enumLease.Dispose();
         }
     }
 
@@ -1058,6 +1447,17 @@ internal sealed class ComCollectionItemNode {
         }
     }
 
+    internal static bool IsScalar(object? value) => !IsExpandable(value);
+
+    private static bool IsExpandable(object? value) =>
+        value != null &&
+        value is not string &&
+        !value.GetType().IsPrimitive &&
+        value is not decimal &&
+        value is not DateTime &&
+        value is not Guid &&
+        value is not Enum;
+
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string TypeName {
         get {
@@ -1068,10 +1468,46 @@ internal sealed class ComCollectionItemNode {
 
     private string DbgInfoOfType() => _value is ComProxy asComProxy ? asComProxy.DbgInfoOfType() : _invoking;
 
+    internal static string NormalizeInvokingLabel(string invoking, bool forceLateInvoke) =>
+        forceLateInvoke && (string.IsNullOrEmpty(invoking) || invoking == ComInvoker.InvocationContext.Unknown || invoking == ComInvoker.InvocationContext.NotEvaluated)
+            ? " [late]"
+            : invoking;
+
+    private void BindRawItem(object? rawItem, bool alreadyWrapped = false) {
+        if (alreadyWrapped) {
+            _value = rawItem;
+        }
+        else {
+            if (rawItem is ComProxy rawProxy && rawProxy.ComBehavior == null)
+                _collection.InheritTracker(rawProxy);
+            _value = _collection.WrapCollectionItem(rawItem);
+        }
+
+        if (_value is ComProxy comProxy) {
+            if (comProxy.ComBehavior == null)
+                comProxy.AttachBehavior(_collection.ComBehavior);
+            comProxy._dbgTypeInfo = NormalizeInvokingLabel(_invoking, _forceLateInvoke);
+            if (_forceLateInvoke || _collection.ForceLateInvoke)
+                comProxy.ForceLateInvoke = true;
+        }
+    }
+
     private void Evaluate() {
         if (_evaluated)
             return;
         _evaluated = true;
+
+        if (_cursor != null) {
+            int batchSize = _forceLateInvoke ? CollectionDebuggerDisplay.ReadBatchSizeDynamic : CollectionDebuggerDisplay.ReadBatchSize;
+            int batchStart = (((_index - 1) / batchSize) * batchSize) + 1;
+            int batchEnd = global::System.Math.Min(_collectionCount, batchStart + batchSize - 1);
+            _cursor.EnsureRange(batchStart, batchEnd);
+            if (_cursor.TryGetItem(_index, out object? enumeratedItem, out string enumInvoking)) {
+                _invoking = NormalizeInvokingLabel(enumInvoking, _forceLateInvoke);
+                BindRawItem(enumeratedItem, alreadyWrapped: true);
+                return;
+            }
+        }
 
         try {
             object rawItem = ComInvoker.GetIndexer(
@@ -1080,86 +1516,22 @@ internal sealed class ComCollectionItemNode {
                 _collection.ComBehavior.InvocationMode,
                 forceLateInvoke: _forceLateInvoke || _collection.ForceLateInvoke,
                 typeKey: _forceLateInvoke ? string.Empty : _collection.TypeCacheKey);
-            _invoking = ComInvoker.InvocationContext.LastPathLabel;
-            _value = ComStubOps.IsComObject(rawItem) || rawItem is IComWrapper
-                ? ComObjectExtensions.ToComProxy(rawItem)
-                : rawItem;
-            if (_value is ComProxy comProxy) {
-                comProxy.AttachBehavior(_collection.ComBehavior);
-                comProxy._dbgTypeInfo = _invoking;
-                if (_forceLateInvoke || _collection.ForceLateInvoke)
-                    comProxy.ForceLateInvoke = true;
-                _name = CollectionDebugItemKey.Resolve(comProxy, _index, _collection.ComBehavior.InvocationMode);
-            }
+            _invoking = NormalizeInvokingLabel(ComInvoker.InvocationContext.LastPathLabel, _forceLateInvoke);
+            BindRawItem(rawItem);
         }
         catch {
-            _invoking = ComInvoker.InvocationContext.LastPathLabel;
-            _value = new ComProxy(new object()) { _missing = true, _blockedMessage = "Unavailable in the debugger preview" };
-            ((ComProxy)_value)._dbgTypeInfo = _invoking;
+            _invoking = NormalizeInvokingLabel(ComInvoker.InvocationContext.LastPathLabel, _forceLateInvoke);
+            var fallback = ComProxy.Missing();
+            fallback._blockedMessage = "Unavailable in the debugger preview";
+            fallback._dbgTypeInfo = _invoking;
+            _value = fallback;
         }
-    }
-}
-
-internal static class CollectionDebugItemKey {
-    public static string Resolve(object? item, int fallbackIndex, InvokeMode invokeType) {
-        if (item == null || !ComStubOps.IsComObject(item))
-            return $"[{fallbackIndex}]";
-
-        try {
-            object? commandName = null;
-            try { commandName = ComInvoker.GetProperty(item, "CommandName", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty); }
-            catch { }
-
-            object? dialogType = null;
-            try { dialogType = ComInvoker.GetProperty(item, "Type", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty); }
-            catch { }
-
-            string commandNameText = commandName?.ToString()?.Trim() ?? string.Empty;
-            if (!string.IsNullOrEmpty(commandNameText) && dialogType != null) {
-                string typeText = dialogType.ToString()?.Trim() ?? string.Empty;
-                return typeText.Equals(commandNameText, global::System.StringComparison.OrdinalIgnoreCase)
-                    ? $"[{commandNameText}]"
-                    : $"[{typeText}: {commandNameText}]";
-            }
-            if (!string.IsNullOrEmpty(commandNameText))
-                return $"[\"{commandNameText}\"]";
-            if (dialogType != null)
-                return $"[{dialogType}]";
-
-            object? id = null;
-            try { id = ComInvoker.GetProperty(item, "ID", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty); }
-            catch { }
-
-            object? name = null;
-            try { name = ComInvoker.GetProperty(item, "Name", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty) ?? ComInvoker.GetProperty(item, "NameLocal", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty ); }
-            catch { }
-
-            string nameText = name?.ToString()?.Trim() ?? string.Empty;
-            if (id != null && !string.IsNullOrEmpty(nameText)) {
-                string idText = id.ToString()?.Trim() ?? string.Empty;
-                return idText.Equals(nameText, global::System.StringComparison.OrdinalIgnoreCase)
-                    ? $"[{nameText}]"
-                    : $"[{idText}: {nameText}]";
-            }
-            if (id != null)
-                return $"[{id}]";
-            if (!string.IsNullOrEmpty(nameText))
-                return $"[\"{nameText}\"]";
-
-            object? index = null;
-            try { index = ComInvoker.GetProperty(item, "Index", invokeType, forceLateInvoke: true, knownDispId: -1, typeKey: string.Empty); }
-            catch { }
-            if (index != null)
-                return $"[Index: {index}]";
-        }
-        catch { }
-
-        return $"[{fallbackIndex}]";
     }
 }
 
 [DebuggerDisplay("{DebuggerValue,nq}", Type = "{TypeName,nq}")]
 internal readonly struct DebugValue<T> {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public T Value { get; }
 
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
@@ -1176,75 +1548,14 @@ internal readonly struct DebugValue<T> {
 }
 
 internal static class CollectionDebuggerDisplay {
-    internal const int ElementsLimit = int.MaxValue;
+    internal const int GroupFactor = 10;
+    internal const int GroupThreshold = 50;
+    internal const int ReadBatchSize = 10;
+    internal const int GroupThresholdDynamic = 10;
+    internal const int ReadBatchSizeDynamic = 5;
 
-    internal static string FormatCount(int count) => (count > ElementsLimit)
-        ? $"{count} (view limited to the first {ElementsLimit} items)"
-        : count.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
-}
-
-internal class BlockedCollectionDebugView<TItem> where TItem : class {
-    private readonly ComProxies _collection;
-    private ComCollectionItemNode[]? _cachedItems;
-
-    public BlockedCollectionDebugView(ComProxies collection) => _collection = collection;
-
-    public string Status => _collection == null || _collection._missing
-        ? "No match (Nothing)"
-        : "Full enumeration blocked to prevent COM timeouts";
-
-    public int LiczbaWszystkichElementów {
-        get {
-            if (_collection == null || _collection._missing)
-                return 0;
-            try { return _collection.Count; }
-            catch { return -1; }
-        }
-    }
-
-    public string Wskazówka => $"Access items directly through the indexer {_collection.GetType().Name}[key] or by enumerating the collection.";
-
-    [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComCollectionItemNode[] Pierwsze25Elementów {
-        get {
-            if (_collection == null || _collection._missing)
-                return Array.Empty<ComCollectionItemNode>();
-            if (_cachedItems != null)
-                return _cachedItems;
-            const int collectionDisplayLimit = CollectionDebuggerDisplay.ElementsLimit;
-
-            try {
-                int count = global::System.Math.Min(_collection.Count, collectionDisplayLimit);
-                var items = new ComCollectionItemNode[global::System.Math.Max(0, count)];
-                for (int index = 1; index <= count; index++)
-                    items[index - 1] = new ComCollectionItemNode(_collection, index, forceLateInvoke: false);
-                return _cachedItems = items;
-            }
-            catch { }
-
-            return _cachedItems = Array.Empty<ComCollectionItemNode>();
-        }
-    }
-}
-
-internal class BlockedCollectionDebugView {
-    private readonly ComProxies _collection;
-    public BlockedCollectionDebugView(ComProxies collection) => _collection = collection;
-
-    public string Status => _collection == null || _collection._missing
-        ? "No match (Nothing)"
-        : "Full enumeration blocked to prevent timeouts and protect the COM thread";
-
-    public int LiczbaElementów {
-        get {
-            if (_collection == null || _collection._missing)
-                return 0;
-            try { return _collection.Count; }
-            catch { return -1; }
-        }
-    }
-
-    public string Wskazówka => $"Access items only through the indexer, e.g. app.{_collection.GetType().Name}[key], or by enumerating the collection.";
+    internal static string FormatCount(int count) =>
+        count.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
 }
 
 internal class ComProxiesDebugView<TItem> where TItem : class {
@@ -1272,23 +1583,10 @@ internal class ComProxiesDebugView<TItem> where TItem : class {
     public DynamicComTree _DynamicDisplay => _collection._DynamicDisplay;
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComGeneratedPropertyNode[] Properties => ComProxyDebugView.CreateGeneratedPropertyNodes(_collection);
+    public object[] Properties => ComProxyDebugView.CreateGeneratedPropertyNodes(_collection);
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ComCollectionItemNode[] Items {
-        get {
-            if (_collection == null || _collection._missing)
-                return Array.Empty<ComCollectionItemNode>();
-            try {
-                int count = global::System.Math.Min(_collection.Count, CollectionDebuggerDisplay.ElementsLimit);
-                var items = new ComCollectionItemNode[global::System.Math.Max(0, count)];
-                for (int index = 1; index <= count; index++)
-                    items[index - 1] = new ComCollectionItemNode(_collection, index, forceLateInvoke: false);
-                return items;
-            }
-            catch { return Array.Empty<ComCollectionItemNode>(); }
-        }
-    }
+    public object[] Items => ComCollectionItemNode.CreateItems(_collection, forceLateInvoke: false);
 }
 
 public static class ComObjectExtensions {
@@ -1391,7 +1689,23 @@ public static class ComObjectExtensions {
             return ComProxy.Missing();
         bool isPoly = (ComStub as ComProxy)?.IsPoly ?? false;
         bool forceLateInvoke = (ComStub as ComProxy)?.ForceLateInvoke ?? false;
-        if (ComStub is ComProxy asComProxy) { return asComProxy; }
+        if (ComStub is ComProxy asComProxy) {
+            if (asComProxy.GetType() == typeof(ComProxy) && !asComProxy.IsMissing && asComProxy.ComPointer != IntPtr.Zero) {
+                var resolvedFromPointer = ComProxyFactory.Resolve(asComProxy.ComPointer);
+                if (resolvedFromPointer.GetType() != typeof(ComProxy)) {
+                    if (asComProxy.ComBehavior != null && resolvedFromPointer.ComBehavior == null)
+                        resolvedFromPointer.AttachBehavior(asComProxy.ComBehavior);
+                    if (isPoly)
+                        resolvedFromPointer.IsPoly = true;
+                    if (forceLateInvoke)
+                        resolvedFromPointer.ForceLateInvoke = true;
+                    asComProxy.Dispose();
+                    return resolvedFromPointer;
+                }
+                resolvedFromPointer.Dispose();
+            }
+            return asComProxy;
+        }
         if (ComStub is ComPointerLease lease) {
             try {
                 var resolvedLease = ComProxyFactory.Resolve(lease);

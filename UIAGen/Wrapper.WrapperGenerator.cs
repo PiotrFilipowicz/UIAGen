@@ -65,19 +65,12 @@ public partial class UiaAdapterWrapper {
                 inheritance = isAdobeCollection ? " : Objects" : " : ComProxies";
             }
 
-            bool isBlocked = IsBlockedEnumeration(baseName);
-            string debuggerDisplayAttribute = isBlocked switch {
-                true => "[global::System.Diagnostics.DebuggerDisplay(\"Count = {Count} [Zablokowane listowanie]\")]" + Environment.NewLine,
-                false => string.Empty
-            };
-            string debuggerViewType = (isBlocked, hasSpecificItemWrapper) switch {
-                (true, true) => $"BlockedCollectionDebugView<{itemName}>",
-                (true, false) => "BlockedCollectionDebugView",
-                (false, true) => $"ComProxiesDebugView<{itemName}>",
-                (false, false) => "ComProxiesUntypedDebugView"
+            string debuggerViewType = hasSpecificItemWrapper switch {
+                true => $"ComProxiesDebugView<{itemName}>",
+                false => "ComProxiesUntypedDebugView"
             };
             AppendLine(/*lang=c#*/ $$"""
-            {{debuggerDisplayAttribute}}[global::System.Diagnostics.DebuggerTypeProxy(typeof({{debuggerViewType}}))]
+            [global::System.Diagnostics.DebuggerTypeProxy(typeof({{debuggerViewType}}))]
             """);
         }
 

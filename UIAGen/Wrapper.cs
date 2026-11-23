@@ -107,14 +107,6 @@ public partial class UiaAdapterWrapper {
         }
     };
 
-    // --- COLLECTIONS WITH FULL ENUMERATION BLOCKED IN THE DEBUGGER ---
-    private static readonly Dictionary<string, HashSet<string>> BlockedEnumerationCollections = new(StringComparer.OrdinalIgnoreCase) {
-        ["MSWord"] = new(StringComparer.OrdinalIgnoreCase) {
-            "Dialogs",
-            "Languages"
-        }
-    };
-
     private static readonly HashSet<string> AdobeObjectsSignatureMethods = new(StringComparer.OrdinalIgnoreCase) {
         "Count",
         "Add",
@@ -153,16 +145,6 @@ public partial class UiaAdapterWrapper {
             }
         }
 
-        return false;
-    }
-
-    private bool IsBlockedEnumeration(string collectionName) {
-        foreach (var appKey in BlockedEnumerationCollections.Keys) {
-            if (MatchesAppKey(appKey)) {
-                if (BlockedEnumerationCollections[appKey].Contains(collectionName))
-                    return true;
-            }
-        }
         return false;
     }
 
