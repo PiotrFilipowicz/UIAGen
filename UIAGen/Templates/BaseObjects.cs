@@ -87,10 +87,13 @@ public unsafe class ComStub : IDisposable, IComWrapper {
 
 [DebuggerDisplay("{DbgInfoOfValue(),nq}", Name = "{DbgInfoOfName(),nq}")]
 public partial class ComProxy : ComStub, IComBindingState {
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private static readonly string[] DbgValueProperties = ["Name", "CommandName", "Title", "ID", "Id"];
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public object? Value { get; }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsPoly { get; set; }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool ForceLateInvoke { get; set; }
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsLate {
@@ -106,8 +109,9 @@ public partial class ComProxy : ComStub, IComBindingState {
     internal string _dbgTypeInfo = ComInvoker.InvocationContext.Unknown;
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     internal string TypeCacheKey => GetType().FullName ?? GetType().Name;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsMissing => _missing;
-    public bool Found => !_missing;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsCreated => !_missing && ComPointer != IntPtr.Zero;
     public DynamicComTree _DynamicDisplay => new DynamicComTree(this);
     internal virtual ComGeneratedMember[] GetDebuggerProperties() => Array.Empty<ComGeneratedMember>();
@@ -668,10 +672,13 @@ internal sealed class ComProxyDebugView {
 
     public ComProxyDebugView(ComProxy target) => _target = target;
 
-    public bool Found => _target != null && _target.Found;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsCreated => _target != null && _target.IsCreated;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsMissing => _target == null || _target.IsMissing;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool IsPoly => _target != null && _target.IsPoly;
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public bool ForceLateInvoke => _target != null && _target.ForceLateInvoke;
     public DynamicComTree _DynamicDisplay => _target._DynamicDisplay;
 
@@ -953,23 +960,22 @@ internal class ComProxiesUntypedDebugView {
     private readonly ComProxies _collection;
     public ComProxiesUntypedDebugView(ComProxies collection) => _collection = collection;
 
-    public bool Found => _collection != null && _collection.Found;
-    public bool IsCreated => _collection != null && _collection.IsCreated;
-    public bool IsMissing => _collection == null || _collection.IsMissing;
-    public bool IsPoly => _collection != null && _collection.IsPoly;
-    public bool ForceLateInvoke => _collection != null && _collection.ForceLateInvoke;
+    //public bool IsCreated => _collection != null && _collection.IsCreated;
+    //public bool IsMissing => _collection == null || _collection.IsMissing;
+    //public bool IsPoly => _collection != null && _collection.IsPoly;
+    //public bool ForceLateInvoke => _collection != null && _collection.ForceLateInvoke;
 
-    public DebugValue<int> Count {
-        get {
-            if (_collection == null || _collection._missing)
-                return new DebugValue<int>(0, "int", ComInvoker.InvocationContext.Unknown);
-            try {
-                int value = _collection.Count;
-                return new DebugValue<int>(value, "int", ComInvoker.InvocationContext.LastPathLabel, CollectionDebuggerDisplay.FormatCount(value));
-            }
-            catch { return new DebugValue<int>(-1, "int", ComInvoker.InvocationContext.LastPathLabel); }
-        }
-    }
+    //public DebugValue<int> Count {
+    //    get {
+    //        if (_collection == null || _collection._missing)
+    //            return new DebugValue<int>(0, "int", ComInvoker.InvocationContext.Unknown);
+    //        try {
+    //            int value = _collection.Count;
+    //            return new DebugValue<int>(value, "int", ComInvoker.InvocationContext.LastPathLabel, CollectionDebuggerDisplay.FormatCount(value));
+    //        }
+    //        catch { return new DebugValue<int>(-1, "int", ComInvoker.InvocationContext.LastPathLabel); }
+    //    }
+    //}
 
     public DynamicComTree _DynamicDisplay => _collection._DynamicDisplay;
 
@@ -984,6 +990,7 @@ internal class ComProxiesUntypedDebugView {
 [DebuggerDisplay("{DbgInfoOfValue(),nq}", Name = "{DbgInfoOfName(),nq}")]
 public class ComProxies : ComProxy, IEnumerable<ComProxy> {
     public ComProxies(object comInstance) : base(comInstance) { }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public virtual int Count => GetValue<int>(nameof(Count), -1);
 
     internal virtual object? WrapCollectionItem(object? rawItem) {
@@ -1562,23 +1569,22 @@ internal class ComProxiesDebugView<TItem> where TItem : class {
     private readonly ComProxies _collection;
     public ComProxiesDebugView(ComProxies collection) => _collection = collection;
 
-    public bool Found => _collection != null && _collection.Found;
-    public bool IsCreated => _collection != null && _collection.IsCreated;
-    public bool IsMissing => _collection == null || _collection.IsMissing;
-    public bool IsPoly => _collection != null && _collection.IsPoly;
-    public bool ForceLateInvoke => _collection != null && _collection.ForceLateInvoke;
+    //public bool IsCreated => _collection != null && _collection.IsCreated;
+    //public bool IsMissing => _collection == null || _collection.IsMissing;
+    //public bool IsPoly => _collection != null && _collection.IsPoly;
+    //public bool ForceLateInvoke => _collection != null && _collection.ForceLateInvoke;
 
-    public DebugValue<int> Count {
-        get {
-            if (_collection == null || _collection._missing)
-                return new DebugValue<int>(0, "int", ComInvoker.InvocationContext.NotEvaluated);
-            try {
-                int value = _collection.Count;
-                return new DebugValue<int>(value, "int", ComInvoker.InvocationContext.LastPathLabel, CollectionDebuggerDisplay.FormatCount(value));
-            }
-            catch { return new DebugValue<int>(-1, "int", ComInvoker.InvocationContext.LastPathLabel); }
-        }
-    }
+    //public DebugValue<int> Count {
+    //    get {
+    //        if (_collection == null || _collection._missing)
+    //            return new DebugValue<int>(0, "int", ComInvoker.InvocationContext.NotEvaluated);
+    //        try {
+    //            int value = _collection.Count;
+    //            return new DebugValue<int>(value, "int", ComInvoker.InvocationContext.LastPathLabel, CollectionDebuggerDisplay.FormatCount(value));
+    //        }
+    //        catch { return new DebugValue<int>(-1, "int", ComInvoker.InvocationContext.LastPathLabel); }
+    //    }
+    //}
 
     public DynamicComTree _DynamicDisplay => _collection._DynamicDisplay;
 

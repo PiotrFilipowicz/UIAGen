@@ -14,7 +14,7 @@
 		<PackAsTool>true</PackAsTool>
 		<ToolCommandName>uiagen</ToolCommandName>
 		<PackageId>UIAGen</PackageId>
-		<Version>1.0.2</Version>
+		<Version>1.0.3</Version>
 		<Authors>Piotr Filipowicz</Authors>
 		<Description>Build-time code generator that turns Windows COM Type Libraries (TLB/DLL/EXE/ProgID) into statically typed, Native AOT-compatible C# adapters for .NET 10.</Description>
 		<PackageTags>com;interop;typelib;tlbimp;native-aot;aot;csharp;dotnet;autocad;office;indesign</PackageTags>
