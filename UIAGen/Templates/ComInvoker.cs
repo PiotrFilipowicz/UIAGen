@@ -100,7 +100,7 @@ namespace UiaAdapter.TemplateSyntax
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct DISPPARAMS
+    public struct DISPPARAMS
     {
         public IntPtr rgvarg;
         public IntPtr rgdispidNamedArgs;
@@ -109,7 +109,7 @@ namespace UiaAdapter.TemplateSyntax
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct EXCEPINFO
+    public struct EXCEPINFO
     {
         public ushort wCode;
         public ushort wReserved;
@@ -128,36 +128,36 @@ namespace UiaAdapter.TemplateSyntax
     public static unsafe class ComInvoker
     {
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal unsafe delegate int GetTypeInfoDelegate(IntPtr pDisp, uint iTInfo, uint lcid, IntPtr* ppTInfo);
+        public unsafe delegate int GetTypeInfoDelegate(IntPtr pDisp, uint iTInfo, uint lcid, IntPtr* ppTInfo);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetTypeAttrDelegate(IntPtr pTypeInfo, IntPtr* ppTypeAttr);
+        public unsafe delegate int GetTypeAttrDelegate(IntPtr pTypeInfo, IntPtr* ppTypeAttr);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetFuncDescDelegate(IntPtr pTypeInfo, int index, IntPtr* ppFuncDesc);
+        public unsafe delegate int GetFuncDescDelegate(IntPtr pTypeInfo, int index, IntPtr* ppFuncDesc);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetDocumentationDelegate(IntPtr pTypeInfo, int memid, IntPtr* pBstrName, IntPtr* pBstrDocString, uint* pdwHelpContext, IntPtr* pBstrHelpFile);
+        public unsafe delegate int GetDocumentationDelegate(IntPtr pTypeInfo, int memid, IntPtr* pBstrName, IntPtr* pBstrDocString, uint* pdwHelpContext, IntPtr* pBstrHelpFile);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate void ReleaseTypeAttrDelegate(IntPtr pTypeInfo, IntPtr pTypeAttr);
+        public delegate void ReleaseTypeAttrDelegate(IntPtr pTypeInfo, IntPtr pTypeAttr);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate void ReleaseFuncDescDelegate(IntPtr pTypeInfo, IntPtr pFuncDesc);
+        public delegate void ReleaseFuncDescDelegate(IntPtr pTypeInfo, IntPtr pFuncDesc);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal unsafe delegate int GetIDsOfNamesDelegate(IntPtr pDisp, Guid* riid, IntPtr* rgszNames, uint cNames, uint lcid, int* rgDispId);
+        public unsafe delegate int GetIDsOfNamesDelegate(IntPtr pDisp, Guid* riid, IntPtr* rgszNames, uint cNames, uint lcid, int* rgDispId);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal unsafe delegate int InvokeDelegate(IntPtr pDisp, int dispIdMember, Guid* riid, uint lcid, ushort wFlags, DISPPARAMS* pDispParams, void* pVarResult, EXCEPINFO* pExcepInfo, uint* puArgErr);
+        public unsafe delegate int InvokeDelegate(IntPtr pDisp, int dispIdMember, Guid* riid, uint lcid, ushort wFlags, DISPPARAMS* pDispParams, void* pVarResult, EXCEPINFO* pExcepInfo, uint* puArgErr);
 
-        internal class InvocationContext
+        public class InvocationContext
         {
-            internal const string Unknown = " [unknown]";
-            internal const string Early = "";
-            internal const string Late = " [late]";
-            internal const string Fallback = " [fallback]";
-            internal const string NotEvaluated = " [not evaluated]";
+            public const string Unknown = " [unknown]";
+            public const string Early = "";
+            public const string Late = " [late]";
+            public const string Fallback = " [fallback]";
+            public const string NotEvaluated = " [not evaluated]";
             private static readonly string[] Modes = new string[]
             {
                 Unknown,
@@ -166,31 +166,31 @@ namespace UiaAdapter.TemplateSyntax
                 Fallback,
                 NotEvaluated
             };
-            internal static string LastPathLabel => Modes[(int)_lastInvocationPath];
+            public static string LastPathLabel => Modes[(int)_lastInvocationPath];
         }
 
         [global::System.ThreadStatic]
         private static ComInvocationPath _lastInvocationPath;
 
         [DllImport("oleaut32.dll", PreserveSig = true)]
-        private static extern int DispGetIDsOfNames(IntPtr pTypeInfo, [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr)] string[] rgszNames, int cNames, out int rgDispId);
+        public static extern int DispGetIDsOfNames(IntPtr pTypeInfo, [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr)] string[] rgszNames, int cNames, out int rgDispId);
 
-        private static readonly Guid IID_NULL = Guid.Empty;
-        private static readonly DISPPARAMS EmptyDispParams = new DISPPARAMS();
-        private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, global::System.Collections.Concurrent.ConcurrentDictionary<string, (int DispId, uint Lcid)>> _dispIdCache =
+        public static readonly Guid IID_NULL = Guid.Empty;
+        public static readonly DISPPARAMS EmptyDispParams = new DISPPARAMS();
+        public static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, global::System.Collections.Concurrent.ConcurrentDictionary<string, (int DispId, uint Lcid)>> _dispIdCache =
             new global::System.Collections.Concurrent.ConcurrentDictionary<string, global::System.Collections.Concurrent.ConcurrentDictionary<string, (int DispId, uint Lcid)>>(global::System.StringComparer.OrdinalIgnoreCase);
 
-        private static readonly HashSet<string> _comInfrastructureMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        public static readonly HashSet<string> _comInfrastructureMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "QueryInterface", "AddRef", "Release",
             "GetTypeInfoCount", "GetTypeInfo", "GetIDsOfNames", "Invoke"
         };
-        private static readonly HashSet<string> _safeDebuggerMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        public static readonly HashSet<string> _safeDebuggerMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             // __UIA_SAFE_DEBUGGER_METHODS__
         };
 
-        private static bool SelectInvocationDispId(IntPtr dispatch, object target, string name, InvokeMode mode, int knownDispId,
+        public static bool SelectInvocationDispId(IntPtr dispatch, object target, string name, InvokeMode mode, int knownDispId,
             bool forceLateInvoke, string typeKey, out int dispId, out uint lcid)
         {
             bool bypassCache = forceLateInvoke || (target is IComBindingState bindingState && (bindingState.IsPoly || bindingState.ForceLateInvoke));
@@ -208,7 +208,7 @@ namespace UiaAdapter.TemplateSyntax
             return false;
         }
 
-        private static IntPtr GetDispatchPointer(object comObj, out bool releaseNeeded)
+        public static IntPtr GetDispatchPointer(object comObj, out bool releaseNeeded)
         {
             releaseNeeded = false;
             if (comObj is IComWrapper w && w.ComPointer != IntPtr.Zero)
@@ -384,7 +384,7 @@ namespace UiaAdapter.TemplateSyntax
             }
         }
 
-        private static bool TryResolveDispId(IntPtr pDispatch, string name, bool bypassCache, string typeKey, out int dispId, out uint lcid)
+        public static bool TryResolveDispId(IntPtr pDispatch, string name, bool bypassCache, string typeKey, out int dispId, out uint lcid)
         {
             dispId = 0;
             lcid = 0;
@@ -715,7 +715,7 @@ namespace UiaAdapter.TemplateSyntax
             return wrapped;
         }
 
-        private static TValue ResolveValue<TValue>(object raw, string memberName) where TValue : struct
+        public static TValue ResolveValue<TValue>(object raw, string memberName) where TValue : struct
         {
             if (raw == null || (raw is ComProxy rawProxy && rawProxy.IsMissing))
                 return default(TValue);
@@ -730,7 +730,7 @@ namespace UiaAdapter.TemplateSyntax
             return (TValue)global::System.Convert.ChangeType(raw, targetType, global::System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        private static bool TryGetBlockedMessage(object comObj, out string message)
+        public static bool TryGetBlockedMessage(object comObj, out string message)
         {
             if (comObj is ComProxy asComProxy && !asComProxy.IsMissing && !string.IsNullOrEmpty(asComProxy._blockedMessage))
             {
@@ -741,7 +741,7 @@ namespace UiaAdapter.TemplateSyntax
             return false;
         }
 
-        private static TResult ApplyInvocationContext<TResult>(TResult result, object comObj, bool forceLateInvoke)
+        public static TResult ApplyInvocationContext<TResult>(TResult result, object comObj, bool forceLateInvoke)
         {
             if (result is ComProxy asComProxy)
             {

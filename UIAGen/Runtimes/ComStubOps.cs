@@ -20,16 +20,16 @@ namespace UiaAdapter.ComRuntime
     public static unsafe partial class ComStubOps
     {
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal unsafe delegate int QueryInterfaceDelegate(IntPtr pUnk, Guid* riid, IntPtr* ppv);
+        public unsafe delegate int QueryInterfaceDelegate(IntPtr pUnk, Guid* riid, IntPtr* ppv);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal delegate uint AddRefDelegate(IntPtr pUnk);
+        public delegate uint AddRefDelegate(IntPtr pUnk);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        internal delegate uint ReleaseDelegate(IntPtr pUnk);
+        public delegate uint ReleaseDelegate(IntPtr pUnk);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int EnumVariantNextDelegate(IntPtr pEnum, uint celt, void* rgVar, uint* pCeltFetched);
+        public unsafe delegate int EnumVariantNextDelegate(IntPtr pEnum, uint celt, void* rgVar, uint* pCeltFetched);
 
         public static readonly Guid IID_IUnknown = new Guid("00000000-0000-0000-C000-000000000046");
         public static readonly Guid IID_IDispatch = new Guid("00020400-0000-0000-C000-000000000046");

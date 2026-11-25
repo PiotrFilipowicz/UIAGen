@@ -616,7 +616,7 @@ internal static class ProgramHelpers {
                     continue;
                 remarksRead = true;
             }
-            if (!blockStart && line.StartsWith("#if")) { // skip first conditional compilation block in the embedded source
+            if (!blockStart && line.StartsWith("#if UIA_ADAPTER_TEMPLATE")) { // skip first conditional compilation block in the embedded source
                 blockStart = true;
                 continue;
             }
@@ -671,6 +671,7 @@ internal static class ProgramHelpers {
 
     private static void WriteRuntimeSources(string outputDirectory) {
         string[] RuntimeSourceNames = [
+            "Polyfill.cs",
             "ComBehavior.cs",
             "ComContracts.cs",
             "ComStubOps.cs",

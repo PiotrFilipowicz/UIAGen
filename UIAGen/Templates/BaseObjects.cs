@@ -1605,7 +1605,7 @@ namespace UiaAdapter.TemplateSyntax {
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate void ReleaseLibAttrDelegate(IntPtr pTypeLib, IntPtr pTLibAttr);
 
-        internal static unsafe bool TryGetComTypeIdentity(object value, out Guid typeLibGuid, out string typeName) {
+        public static unsafe bool TryGetComTypeIdentity(object value, out Guid typeLibGuid, out string typeName) {
             typeLibGuid = Guid.Empty;
             typeName = string.Empty;
             if (value == null)
