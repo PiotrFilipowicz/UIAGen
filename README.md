@@ -1,15 +1,11 @@
 ![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.png)
 
-<<<<<<< HEAD
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/) [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows) [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE) ![.NET 10](...) ![OS License](...) [![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=for-the-badge&logo=nuget)](https://www.nuget.org/packages/UIAGen) [![NuGet Downloads](https://img.shields.io/nuget/dt/UIAGen.svg?style=for-the-badge&logo=nuget)](https://www.nuget.org/packages/UIAGen)
-=======
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
 [![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
 [![GitHub Release](https://img.shields.io/github/v/release/PiotrFilipowicz/UIAGen?style=flat-square&logo=github)](https://github.com/PiotrFilipowicz/UIAGen/releases)
->>>>>>> 107298f6431bb92f76c80ca5e7e7ddfbe377ced2
 
 # Universal Interop Assembly (UIA) Code Generator
 
