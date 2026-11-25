@@ -421,7 +421,7 @@ public class {{safeTypeName}}{{inheritance}} {
             }
 
             for (int i = 0; i < fn.Params.Count; i++) {
-                var (pName, pRawType, isOptional, hasDefault, defaultValue, firstEnumMember) = fn.Params[i];
+                var (pName, pRawType, isOptional, hasDefault, defaultValue, firstEnumMember, isInterface) = fn.Params[i];
                 bool canEmitDefault = isOptional && i > lastRequiredIndex;
 
                 string pWrapType = GetCanonicalTypeName(ResolveWrapperTypeName(pRawType, pName));
@@ -433,6 +433,7 @@ public class {{safeTypeName}}{{inheritance}} {
                 bool isParamEnum = isParamExternal
                     ? (KnownExternalEnums.Contains(cleanPWrapNoGlobal) || KnownExternalEnums.Contains(cleanPWrapType))
                     : KnownEnums.Contains(cleanPWrapType);
+                bool isStringParam = pRawType == "string" || pName.Equals("VersionComments", StringComparison.OrdinalIgnoreCase);
 
                 if (pRawType == "void" || cleanPWrapType == "void") {
                     declParams.Add(canEmitDefault ? $"object {pName} = default" : $"object {pName}");
@@ -447,7 +448,7 @@ public class {{safeTypeName}}{{inheritance}} {
                         declParams.Add(isOptional ? $"{qualified} {pName}" : $"{qualified} {pName}");
                     }
                 }
-                else if (pRawType == "string" || pName.Equals("VersionComments", StringComparison.OrdinalIgnoreCase)) {
+                else if (isStringParam) {
                     if (canEmitDefault) {
                         string defaultLiteral = FormatStringDefaultLiteral(hasDefault, defaultValue);
                         declParams.Add($"string {pName} = {defaultLiteral}");
@@ -471,7 +472,12 @@ public class {{safeTypeName}}{{inheritance}} {
                     declParams.Add(canEmitDefault ? $"{qualified} {pName} = default" : $"{qualified} {pName}");
                 }
 
-                passParamsLate.Add(pName);
+                bool isWrapperOrObjectParam = !isStringParam && !isParamEnum && !IsPrimitiveType(cleanPWrapType) &&
+                    pRawType != "void" && cleanPWrapType != "void" &&
+                    !cleanPWrapType.EndsWith("[]", StringComparison.Ordinal);
+                passParamsLate.Add(isInterface && isWrapperOrObjectParam
+                    ? $"global::{RootNamespace}.ComProxy.UnwrapInterface({pName})"
+                    : pName);
             }
 
             string signature = $"{newMod}{methodDeclRet} {methodIdentifier}({string.Join(", ", declParams)})";
@@ -484,6 +490,7 @@ public class {{safeTypeName}}{{inheritance}} {
                             public {{signature}} {
                                 ComBehavior?.Tracker.Clear();
                                 InvokeVoid("{{fnComName}}", {{fn.DispId}}{{lateArgsStrWithComma}});
+                                Dispose();
                             }
                         """
                         : $"    public {signature} => InvokeVoid(\"{fnComName}\", {fn.DispId}{lateArgsStrWithComma});");

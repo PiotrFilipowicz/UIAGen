@@ -21,12 +21,10 @@ using UiaAdapter.ComRuntime;
 
 #pragma warning disable CS8602, CS8604, CS8601, CS8625, CS8765
 
-namespace UiaAdapter.TemplateSyntax
-{
+namespace UiaAdapter.TemplateSyntax {
 #endif
 
-    internal static class MissingConfig
-    {
+    internal static class MissingConfig {
         internal static bool ReturnMissingForMissingCollectionItem { get; set; }
         internal static ISet<int> MissingCollectionItemHResults { get; } = new HashSet<int>
         {
@@ -40,15 +38,13 @@ namespace UiaAdapter.TemplateSyntax
     // =========================================================================
     // DTP DOMAIN VALUE OBJECTS
     // =========================================================================
-    public readonly struct GeometricBounds : IEquatable<GeometricBounds>
-    {
+    public readonly struct GeometricBounds : IEquatable<GeometricBounds> {
         public double Top { get; }
         public double Left { get; }
         public double Bottom { get; }
         public double Right { get; }
 
-        public GeometricBounds(double top, double left, double bottom, double right)
-        {
+        public GeometricBounds(double top, double left, double bottom, double right) {
             Top = top;
             Left = left;
             Bottom = bottom;
@@ -67,10 +63,8 @@ namespace UiaAdapter.TemplateSyntax
 
         public override bool Equals(object obj) => obj is GeometricBounds other && Equals(other);
 
-        public override int GetHashCode()
-        {
-            unchecked
-            {
+        public override int GetHashCode() {
+            unchecked {
                 int hash = Top.GetHashCode();
                 hash = (hash * 397) ^ Left.GetHashCode();
                 hash = (hash * 397) ^ Bottom.GetHashCode();
@@ -83,16 +77,14 @@ namespace UiaAdapter.TemplateSyntax
         public static bool operator !=(GeometricBounds left, GeometricBounds right) => !left.Equals(right);
     }
 
-    public enum ComInvokeKind
-    {
+    public enum ComInvokeKind {
         Method = 1,
         PropertyGet = 2,
         PropertyPut = 4,
         PropertyPutRef = 8
     }
 
-    internal enum ComInvocationPath
-    {
+    internal enum ComInvocationPath {
         Unknown,
         Early,
         Late,
@@ -100,8 +92,7 @@ namespace UiaAdapter.TemplateSyntax
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct DISPPARAMS
-    {
+    public struct DISPPARAMS {
         public IntPtr rgvarg;
         public IntPtr rgdispidNamedArgs;
         public uint cArgs;
@@ -109,8 +100,7 @@ namespace UiaAdapter.TemplateSyntax
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct EXCEPINFO
-    {
+    public struct EXCEPINFO {
         public ushort wCode;
         public ushort wReserved;
         public IntPtr bstrSource;
@@ -125,8 +115,7 @@ namespace UiaAdapter.TemplateSyntax
     // =========================================================================
     // DIRECT VTABLE INVOKER (x86 / x64, NO COMIMPORT)
     // =========================================================================
-    public static unsafe class ComInvoker
-    {
+    public static unsafe class ComInvoker {
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         public unsafe delegate int GetTypeInfoDelegate(IntPtr pDisp, uint iTInfo, uint lcid, IntPtr* ppTInfo);
 
@@ -151,8 +140,7 @@ namespace UiaAdapter.TemplateSyntax
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         public unsafe delegate int InvokeDelegate(IntPtr pDisp, int dispIdMember, Guid* riid, uint lcid, ushort wFlags, DISPPARAMS* pDispParams, void* pVarResult, EXCEPINFO* pExcepInfo, uint* puArgErr);
 
-        public class InvocationContext
-        {
+        public class InvocationContext {
             public const string Unknown = " [unknown]";
             public const string Early = "";
             public const string Late = " [late]";
@@ -185,17 +173,14 @@ namespace UiaAdapter.TemplateSyntax
             "QueryInterface", "AddRef", "Release",
             "GetTypeInfoCount", "GetTypeInfo", "GetIDsOfNames", "Invoke"
         };
-        public static readonly HashSet<string> _safeDebuggerMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
+        public static readonly HashSet<string> _safeDebuggerMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             // __UIA_SAFE_DEBUGGER_METHODS__
         };
 
         public static bool SelectInvocationDispId(IntPtr dispatch, object target, string name, InvokeMode mode, int knownDispId,
-            bool forceLateInvoke, string typeKey, out int dispId, out uint lcid)
-        {
+            bool forceLateInvoke, string typeKey, out int dispId, out uint lcid) {
             bool bypassCache = forceLateInvoke || (target is IComBindingState bindingState && (bindingState.IsPoly || bindingState.ForceLateInvoke));
-            if (!bypassCache && knownDispId != -1 && mode == InvokeMode.Early)
-            {
+            if (!bypassCache && knownDispId != -1 && mode == InvokeMode.Early) {
                 dispId = knownDispId;
                 lcid = 0;
                 _lastInvocationPath = ComInvocationPath.Early;
@@ -208,17 +193,14 @@ namespace UiaAdapter.TemplateSyntax
             return false;
         }
 
-        public static IntPtr GetDispatchPointer(object comObj, out bool releaseNeeded)
-        {
+        public static IntPtr GetDispatchPointer(object comObj, out bool releaseNeeded) {
             releaseNeeded = false;
-            if (comObj is IComWrapper w && w.ComPointer != IntPtr.Zero)
-            {
+            if (comObj is IComWrapper w && w.ComPointer != IntPtr.Zero) {
                 return w.ComPointer;
             }
 
             IntPtr pDisp = ComStubOps.GetIDispatch(comObj);
-            if (pDisp != IntPtr.Zero)
-            {
+            if (pDisp != IntPtr.Zero) {
                 releaseNeeded = true;
                 return pDisp;
             }
@@ -226,10 +208,8 @@ namespace UiaAdapter.TemplateSyntax
             throw new InvalidOperationException("The target object does not expose a native IDispatch pointer.");
         }
 
-        public static global::UiaAdapter.ComRuntime.ComPointerLease CreateFromProgID(string progId)
-        {
-            if (ComStubOps.CLSIDFromProgID(progId, out Guid clsid) < 0)
-            {
+        public static global::UiaAdapter.ComRuntime.ComPointerLease CreateFromProgID(string progId) {
+            if (ComStubOps.CLSIDFromProgID(progId, out Guid clsid) < 0) {
                 throw new global::System.InvalidOperationException($"No registered COM server found for '{progId}'.");
             }
 
@@ -238,8 +218,7 @@ namespace UiaAdapter.TemplateSyntax
 
             // 5 = CLSCTX_INPROC_SERVER (1) | CLSCTX_LOCAL_SERVER (4)
             int hr = ComStubOps.CoCreateInstance(&clsid, IntPtr.Zero, 5, &iidIDispatch, &pUnk);
-            if (hr < 0 || pUnk == IntPtr.Zero)
-            {
+            if (hr < 0 || pUnk == IntPtr.Zero) {
                 global::System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(hr);
             }
 
@@ -247,15 +226,13 @@ namespace UiaAdapter.TemplateSyntax
             finally { ComStubOps.Release(pUnk); }
         }
 
-        public static string[] GetAllMemberNames(object comObj, bool parameterlessOnly = false)
-        {
+        public static string[] GetAllMemberNames(object comObj, bool parameterlessOnly = false) {
             if (comObj == null)
                 throw new ArgumentNullException(nameof(comObj));
             if (comObj is ComProxy asComProxy)
                 asComProxy.ThrowIfMissing("GetMemberNames");
             IntPtr pDispatch = GetDispatchPointer(comObj, out bool releaseNeeded);
-            try
-            {
+            try {
                 if (!ComStubOps.TryGetVTableFunction(pDispatch, 4, out IntPtr getTypeInfoFunction))
                     return Array.Empty<string>();
                 var getTypeInfo = Marshal.GetDelegateForFunctionPointer<GetTypeInfoDelegate>(getTypeInfoFunction);
@@ -264,14 +241,12 @@ namespace UiaAdapter.TemplateSyntax
                     return Array.Empty<string>();
 
                 var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                try
-                {
+                try {
                     if (!ComStubOps.TryGetVTableFunction(pTypeInfo, 3, out IntPtr getTypeAttrFunction) ||
                         !ComStubOps.TryGetVTableFunction(pTypeInfo, 5, out IntPtr getFuncDescFunction) ||
                         !ComStubOps.TryGetVTableFunction(pTypeInfo, 12, out IntPtr getDocumentationFunction) ||
                         !ComStubOps.TryGetVTableFunction(pTypeInfo, 19, out IntPtr releaseTypeAttrFunction) ||
-                        !ComStubOps.TryGetVTableFunction(pTypeInfo, 20, out IntPtr releaseFuncDescFunction))
-                    {
+                        !ComStubOps.TryGetVTableFunction(pTypeInfo, 20, out IntPtr releaseFuncDescFunction)) {
                         return Array.Empty<string>();
                     }
 
@@ -282,24 +257,18 @@ namespace UiaAdapter.TemplateSyntax
                     var releaseFuncDesc = Marshal.GetDelegateForFunctionPointer<ReleaseFuncDescDelegate>(releaseFuncDescFunction);
 
                     IntPtr pTypeAttr = IntPtr.Zero;
-                    if (getTypeAttr(pTypeInfo, &pTypeAttr) == 0 && pTypeAttr != IntPtr.Zero)
-                    {
-                        try
-                        {
+                    if (getTypeAttr(pTypeInfo, &pTypeAttr) == 0 && pTypeAttr != IntPtr.Zero) {
+                        try {
                             int cFuncsOffset = IntPtr.Size == 8 ? 48 : 44;
                             ushort cFuncs = *(ushort*)((byte*)pTypeAttr + cFuncsOffset);
 
-                            for (int i = 0; i < cFuncs; i++)
-                            {
+                            for (int i = 0; i < cFuncs; i++) {
                                 IntPtr pFuncDesc = IntPtr.Zero;
-                                if (getFuncDesc(pTypeInfo, i, &pFuncDesc) == 0 && pFuncDesc != IntPtr.Zero)
-                                {
-                                    try
-                                    {
+                                if (getFuncDesc(pTypeInfo, i, &pFuncDesc) == 0 && pFuncDesc != IntPtr.Zero) {
+                                    try {
                                         int memid = *(int*)pFuncDesc;
                                         bool requiresSafeMethodName = false;
-                                        if (parameterlessOnly)
-                                        {
+                                        if (parameterlessOnly) {
                                             int parameterDescriptorsOffset = IntPtr.Size == 8 ? 16 : 8;
                                             int invkindOffset = IntPtr.Size == 8 ? 28 : 16;
                                             int cParamsOffset = IntPtr.Size == 8 ? 36 : 24;
@@ -308,24 +277,20 @@ namespace UiaAdapter.TemplateSyntax
                                             short parameterCount = *(short*)((byte*)pFuncDesc + cParamsOffset);
                                             short optionalParameterCount = *(short*)((byte*)pFuncDesc + cParamsOptOffset);
                                             bool allParametersOptional = parameterCount == 0;
-                                            if (parameterCount > 0)
-                                            {
+                                            if (parameterCount > 0) {
                                                 IntPtr parameterDescriptors = *(IntPtr*)((byte*)pFuncDesc + parameterDescriptorsOffset);
-                                                if (parameterDescriptors != IntPtr.Zero)
-                                                {
+                                                if (parameterDescriptors != IntPtr.Zero) {
                                                     int elementDescriptorSize = IntPtr.Size == 8 ? 32 : 16;
                                                     int parameterFlagsOffset = IntPtr.Size == 8 ? 24 : 12;
                                                     allParametersOptional = true;
-                                                    for (int parameterIndex = 0; parameterIndex < parameterCount; parameterIndex++)
-                                                    {
+                                                    for (int parameterIndex = 0; parameterIndex < parameterCount; parameterIndex++) {
                                                         ushort parameterFlags = *(ushort*)((byte*)parameterDescriptors
                                                             + parameterIndex * elementDescriptorSize
                                                             + parameterFlagsOffset);
                                                         bool isTrailingOptionalParameter = optionalParameterCount > 0
                                                             && parameterIndex >= parameterCount - optionalParameterCount;
                                                         const ushort OptionalOrDefaultFlags = 0x10 | 0x20;
-                                                        if (!isTrailingOptionalParameter && (parameterFlags & OptionalOrDefaultFlags) == 0)
-                                                        {
+                                                        if (!isTrailingOptionalParameter && (parameterFlags & OptionalOrDefaultFlags) == 0) {
                                                             allParametersOptional = false;
                                                             break;
                                                         }
@@ -339,61 +304,50 @@ namespace UiaAdapter.TemplateSyntax
                                             requiresSafeMethodName = invokeKind == INVOKEKIND.INVOKE_FUNC;
                                         }
                                         IntPtr bstrName = IntPtr.Zero;
-                                        if (getDocumentation(pTypeInfo, memid, &bstrName, null, null, null) == 0 && bstrName != IntPtr.Zero)
-                                        {
-                                            try
-                                            {
+                                        if (getDocumentation(pTypeInfo, memid, &bstrName, null, null, null) == 0 && bstrName != IntPtr.Zero) {
+                                            try {
                                                 string name = ComStubOps.BstrToString(bstrName) ?? string.Empty;
                                                 if (!string.IsNullOrEmpty(name) &&
                                                     !_comInfrastructureMembers.Contains(name) &&
                                                     (!requiresSafeMethodName ||
-                                                        (comObj is ComProxies && _safeDebuggerMethods.Contains(name))))
-                                                {
+                                                        (comObj is ComProxies && _safeDebuggerMethods.Contains(name)))) {
                                                     names.Add(name);
                                                 }
                                             }
-                                            finally
-                                            {
+                                            finally {
                                                 ComStubOps.SysFreeString(bstrName);
                                             }
                                         }
                                     }
-                                    finally
-                                    {
+                                    finally {
                                         releaseFuncDesc(pTypeInfo, pFuncDesc);
                                     }
                                 }
                             }
                         }
-                        finally
-                        {
+                        finally {
                             releaseTypeAttr(pTypeInfo, pTypeAttr);
                         }
                     }
                 }
-                finally
-                {
+                finally {
                     ComStubOps.Release(pTypeInfo);
                 }
                 return names.ToArray();
             }
-            finally
-            {
+            finally {
                 if (releaseNeeded && pDispatch != IntPtr.Zero)
                     ComStubOps.Release(pDispatch);
             }
         }
 
-        public static bool TryResolveDispId(IntPtr pDispatch, string name, bool bypassCache, string typeKey, out int dispId, out uint lcid)
-        {
+        public static bool TryResolveDispId(IntPtr pDispatch, string name, bool bypassCache, string typeKey, out int dispId, out uint lcid) {
             dispId = 0;
             lcid = 0;
 
             bool canCache = !bypassCache && !string.IsNullOrEmpty(typeKey);
-            if (canCache)
-            {
-                if (_dispIdCache.TryGetValue(typeKey, out var memberMap) && memberMap.TryGetValue(name, out var cached))
-                {
+            if (canCache) {
+                if (_dispIdCache.TryGetValue(typeKey, out var memberMap) && memberMap.TryGetValue(name, out var cached)) {
                     dispId = cached.DispId;
                     lcid = cached.Lcid;
                     return true;
@@ -411,23 +365,17 @@ namespace UiaAdapter.TemplateSyntax
             var getIDs = Marshal.GetDelegateForFunctionPointer<GetIDsOfNamesDelegate>(getIdsFunction);
 
             IntPtr* rgszNames = stackalloc IntPtr[1];
-            fixed (Guid* pRiid = &IID_NULL)
-            {
-                foreach (var testName in namesToTest)
-                {
-                    fixed (char* pChar = testName)
-                    {
+            fixed (Guid* pRiid = &IID_NULL) {
+                foreach (var testName in namesToTest) {
+                    fixed (char* pChar = testName) {
                         rgszNames[0] = (IntPtr)pChar;
 
-                        foreach (var testLcid in lcidsToTest)
-                        {
+                        foreach (var testLcid in lcidsToTest) {
                             int outDispId = 0;
-                            if (getIDs(pDispatch, pRiid, rgszNames, 1, testLcid, &outDispId) >= 0)
-                            {
+                            if (getIDs(pDispatch, pRiid, rgszNames, 1, testLcid, &outDispId) >= 0) {
                                 dispId = outDispId;
                                 lcid = testLcid;
-                                if (canCache)
-                                {
+                                if (canCache) {
                                     var map = _dispIdCache.GetOrAdd(typeKey, _ => new global::System.Collections.Concurrent.ConcurrentDictionary<string, (int DispId, uint Lcid)>(global::System.StringComparer.OrdinalIgnoreCase));
                                     map.TryAdd(name, (dispId, lcid));
                                 }
@@ -442,18 +390,13 @@ namespace UiaAdapter.TemplateSyntax
                 return false;
             var getTypeInfo = Marshal.GetDelegateForFunctionPointer<GetTypeInfoDelegate>(getTypeInfoFunction);
             IntPtr pTypeInfo = IntPtr.Zero;
-            if (getTypeInfo(pDispatch, 0, 0, &pTypeInfo) == 0 && pTypeInfo != IntPtr.Zero)
-            {
-                try
-                {
-                    foreach (var testName in namesToTest)
-                    {
-                        if (DispGetIDsOfNames(pTypeInfo, new string[] { testName }, 1, out int resolvedId) >= 0)
-                        {
+            if (getTypeInfo(pDispatch, 0, 0, &pTypeInfo) == 0 && pTypeInfo != IntPtr.Zero) {
+                try {
+                    foreach (var testName in namesToTest) {
+                        if (DispGetIDsOfNames(pTypeInfo, new string[] { testName }, 1, out int resolvedId) >= 0) {
                             dispId = resolvedId;
                             lcid = 0;
-                            if (canCache)
-                            {
+                            if (canCache) {
                                 var map = _dispIdCache.GetOrAdd(typeKey, _ => new global::System.Collections.Concurrent.ConcurrentDictionary<string, (int DispId, uint Lcid)>(global::System.StringComparer.OrdinalIgnoreCase));
                                 map.TryAdd(name, (dispId, lcid));
                             }
@@ -464,15 +407,13 @@ namespace UiaAdapter.TemplateSyntax
                 finally { ComStubOps.Release(pTypeInfo); }
             }
 
-            if (string.IsNullOrEmpty(name) || name.Equals("Item", StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.IsNullOrEmpty(name) || name.Equals("Item", StringComparison.OrdinalIgnoreCase)) {
                 dispId = 0;
                 lcid = 0;
                 return true;
             }
 
-            if (name.Equals("_NewEnum", StringComparison.OrdinalIgnoreCase))
-            {
+            if (name.Equals("_NewEnum", StringComparison.OrdinalIgnoreCase)) {
                 dispId = -4;
                 lcid = 0;
                 return true;
@@ -481,21 +422,18 @@ namespace UiaAdapter.TemplateSyntax
             return false;
         }
 
-        public static object DirectGet(object comObj, string name, InvokeMode invokeMode, int knownDispId, bool forceLateInvoke, string typeKey)
-        {
+        public static object DirectGet(object comObj, string name, InvokeMode invokeMode, int knownDispId, bool forceLateInvoke, string typeKey) {
             if (comObj == null)
                 throw new ArgumentNullException(nameof(comObj));
             if (comObj is ComProxy asComProxy)
                 asComProxy.ThrowIfMissing(name);
             IntPtr pDispatch = GetDispatchPointer(comObj, out bool releaseNeeded);
 
-            try
-            {
+            try {
                 string tKey = string.IsNullOrEmpty(typeKey) && comObj is ComProxy proxy ? proxy.TypeCacheKey : typeKey;
                 bool usedKnownDispId = SelectInvocationDispId(pDispatch, comObj, name, invokeMode, knownDispId, forceLateInvoke, tKey, out int dispId, out uint lcid);
 
-                if (!ComStubOps.TryGetVTableFunction(pDispatch, 6, out IntPtr invokeFunction))
-                {
+                if (!ComStubOps.TryGetVTableFunction(pDispatch, 6, out IntPtr invokeFunction)) {
                     throw new COMException("The IDispatch::Invoke pointer is invalid or does not point to executable memory.", unchecked((int)0x80004003));
                 }
                 var invoke = Marshal.GetDelegateForFunctionPointer<InvokeDelegate>(invokeFunction);
@@ -507,14 +445,11 @@ namespace UiaAdapter.TemplateSyntax
                 EXCEPINFO excepInfo = default(EXCEPINFO);
                 uint argErr = 0;
 
-                fixed (Guid* pRiid = &IID_NULL)
-                {
+                fixed (Guid* pRiid = &IID_NULL) {
                     int hr = invoke(pDispatch, dispId, pRiid, lcid, 3, &dp, pVarResult, &excepInfo, &argErr);
 
-                    if (usedKnownDispId && hr < 0)
-                    {
-                        if (TryResolveDispId(pDispatch, name, bypassCache: false, tKey, out int dynamicId, out uint dynamicLcid))
-                        {
+                    if (usedKnownDispId && hr < 0) {
+                        if (TryResolveDispId(pDispatch, name, bypassCache: false, tKey, out int dynamicId, out uint dynamicLcid)) {
                             _lastInvocationPath = ComInvocationPath.LateFallback;
                             ComStubOps.VariantClear((IntPtr)pVarResult);
                             ComStubOps.VariantInit((IntPtr)pVarResult);
@@ -522,13 +457,11 @@ namespace UiaAdapter.TemplateSyntax
                         }
                     }
 
-                    if (hr < 0)
-                    {
+                    if (hr < 0) {
                         ComStubOps.VariantClear((IntPtr)pVarResult);
 
                         string description = string.Empty;
-                        if (excepInfo.bstrDescription != IntPtr.Zero)
-                        {
+                        if (excepInfo.bstrDescription != IntPtr.Zero) {
                             description = ComStubOps.BstrToString(excepInfo.bstrDescription) ?? string.Empty;
                             ComStubOps.SysFreeString(excepInfo.bstrDescription);
                         }
@@ -549,30 +482,26 @@ namespace UiaAdapter.TemplateSyntax
                 try { return ComStubOps.VariantToObject<ComProxy>(pVarResult); }
                 finally { ComStubOps.VariantClear((IntPtr)pVarResult); }
             }
-            finally
-            {
+            finally {
                 if (releaseNeeded && pDispatch != IntPtr.Zero)
                     ComStubOps.Release(pDispatch);
             }
         }
 
-        public static object DirectInvoke(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, ComInvokeKind invokeKind, string typeKey = "", object[] args = null)
-        {
+        public static object DirectInvoke(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, ComInvokeKind invokeKind, string typeKey = "", object[] args = null) {
             if (comObj == null)
                 throw new ArgumentNullException(nameof(comObj));
             if (comObj is ComProxy asComProxy)
                 asComProxy.ThrowIfMissing(name);
             IntPtr pDispatch = GetDispatchPointer(comObj, out bool releaseNeeded);
 
-            try
-            {
+            try {
                 string tKey = string.IsNullOrEmpty(typeKey) && comObj is ComProxy proxy ? proxy.TypeCacheKey : typeKey;
                 bool usedKnownDispId = SelectInvocationDispId(pDispatch, comObj, name, invokeMode, knownDispId, forceLateInvoke, tKey, out int dispId, out uint lcid);
 
                 bool isPut = invokeKind == ComInvokeKind.PropertyPut || invokeKind == ComInvokeKind.PropertyPutRef;
                 ushort flags;
-                switch (invokeKind)
-                {
+                switch (invokeKind) {
                     case ComInvokeKind.Method:
                     case ComInvokeKind.PropertyGet:
                         flags = 3;
@@ -589,21 +518,18 @@ namespace UiaAdapter.TemplateSyntax
                 }
 
                 int rawCount = args?.Length ?? 0;
-                if (!isPut && rawCount > 0)
-                {
+                if (!isPut && rawCount > 0) {
                     while (rawCount > 0 && (
                         args[rawCount - 1] == null ||
                         args[rawCount - 1] == global::System.Type.Missing ||
-                        (args[rawCount - 1] is IComVariantValue v && v.IsMissing)))
-                    {
+                        (args[rawCount - 1] is IComVariantValue v && v.IsMissing))) {
                         rawCount--;
                     }
                 }
                 int argCount = rawCount;
 
                 int variantSize = IntPtr.Size == 8 ? 24 : 16;
-                if (argCount > 256)
-                {
+                if (argCount > 256) {
                     throw new ArgumentOutOfRangeException(nameof(args), "A COM call can pass at most 256 arguments on the stack.");
                 }
                 int argumentBytes = checked(argCount * variantSize);
@@ -615,10 +541,8 @@ namespace UiaAdapter.TemplateSyntax
                 byte* pVarResult = stackalloc byte[variantSize];
                 ComStubOps.VariantInit((IntPtr)pVarResult);
 
-                try
-                {
-                    for (int i = 0; i < argCount; i++)
-                    {
+                try {
+                    for (int i = 0; i < argCount; i++) {
                         int argIndex = argCount - 1 - i;
                         object val = isPut ? ComProxy.Unwrap(args[argIndex]) : ComProxy.UnwrapForMethod(args[argIndex]);
                         byte* slot = (byte*)pArgs + (i * variantSize);
@@ -628,29 +552,24 @@ namespace UiaAdapter.TemplateSyntax
                     int putNamedArg = -3;
                     IntPtr pNamedArgs = isPut ? (IntPtr)(&putNamedArg) : IntPtr.Zero;
 
-                    DISPPARAMS dp = new DISPPARAMS
-                    {
+                    DISPPARAMS dp = new DISPPARAMS {
                         rgvarg = pArgs,
                         rgdispidNamedArgs = pNamedArgs,
                         cArgs = (uint)argCount,
                         cNamedArgs = isPut ? 1u : 0u
                     };
 
-                    if (!ComStubOps.TryGetVTableFunction(pDispatch, 6, out IntPtr invokeFunction))
-                    {
+                    if (!ComStubOps.TryGetVTableFunction(pDispatch, 6, out IntPtr invokeFunction)) {
                         throw new COMException("The IDispatch::Invoke pointer is invalid or does not point to executable memory.", unchecked((int)0x80004003));
                     }
                     var invoke = Marshal.GetDelegateForFunctionPointer<InvokeDelegate>(invokeFunction);
                     EXCEPINFO excepInfo = default(EXCEPINFO);
                     uint argErr = 0;
-                    fixed (Guid* pRiid = &IID_NULL)
-                    {
+                    fixed (Guid* pRiid = &IID_NULL) {
                         int hr = invoke(pDispatch, dispId, pRiid, lcid, flags, &dp, pVarResult, &excepInfo, &argErr);
 
-                        if (usedKnownDispId && hr < 0)
-                        {
-                            if (TryResolveDispId(pDispatch, name, bypassCache: false, tKey, out int dynamicId, out uint dynamicLcid))
-                            {
+                        if (usedKnownDispId && hr < 0) {
+                            if (TryResolveDispId(pDispatch, name, bypassCache: false, tKey, out int dynamicId, out uint dynamicLcid)) {
                                 _lastInvocationPath = ComInvocationPath.LateFallback;
                                 ComStubOps.VariantClear((IntPtr)pVarResult);
                                 ComStubOps.VariantInit((IntPtr)pVarResult);
@@ -658,13 +577,11 @@ namespace UiaAdapter.TemplateSyntax
                             }
                         }
 
-                        if (hr < 0)
-                        {
+                        if (hr < 0) {
                             ComStubOps.VariantClear((IntPtr)pVarResult);
 
                             string description = string.Empty;
-                            if (excepInfo.bstrDescription != IntPtr.Zero)
-                            {
+                            if (excepInfo.bstrDescription != IntPtr.Zero) {
                                 description = ComStubOps.BstrToString(excepInfo.bstrDescription) ?? string.Empty;
                                 ComStubOps.SysFreeString(excepInfo.bstrDescription);
                             }
@@ -684,17 +601,14 @@ namespace UiaAdapter.TemplateSyntax
                     try { return ComStubOps.VariantToObject<ComProxy>(pVarResult); }
                     finally { ComStubOps.VariantClear((IntPtr)pVarResult); }
                 }
-                finally
-                {
-                    if (pArgs != IntPtr.Zero)
-                    {
+                finally {
+                    if (pArgs != IntPtr.Zero) {
                         for (int i = 0; i < argCount; i++)
                             ComStubOps.VariantClear(pArgs + (i * variantSize));
                     }
                 }
             }
-            finally
-            {
+            finally {
                 if (releaseNeeded && pDispatch != IntPtr.Zero)
                     ComStubOps.Release(pDispatch);
             }
@@ -715,25 +629,21 @@ namespace UiaAdapter.TemplateSyntax
             return wrapped;
         }
 
-        public static TValue ResolveValue<TValue>(object raw, string memberName) where TValue : struct
-        {
+        public static TValue ResolveValue<TValue>(object raw, string memberName) where TValue : struct {
             if (raw == null || (raw is ComProxy rawProxy && rawProxy.IsMissing))
                 return default(TValue);
             if (raw is TValue typed)
                 return typed;
             Type targetType = typeof(TValue);
-            if (targetType.IsEnum)
-            {
+            if (targetType.IsEnum) {
                 object underlyingVal = global::System.Convert.ChangeType(raw, Enum.GetUnderlyingType(targetType), global::System.Globalization.CultureInfo.InvariantCulture);
                 return (TValue)Enum.ToObject(targetType, underlyingVal);
             }
             return (TValue)global::System.Convert.ChangeType(raw, targetType, global::System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        public static bool TryGetBlockedMessage(object comObj, out string message)
-        {
-            if (comObj is ComProxy asComProxy && !asComProxy.IsMissing && !string.IsNullOrEmpty(asComProxy._blockedMessage))
-            {
+        public static bool TryGetBlockedMessage(object comObj, out string message) {
+            if (comObj is ComProxy asComProxy && !asComProxy.IsMissing && !string.IsNullOrEmpty(asComProxy._blockedMessage)) {
                 message = asComProxy._blockedMessage;
                 return true;
             }
@@ -741,10 +651,8 @@ namespace UiaAdapter.TemplateSyntax
             return false;
         }
 
-        public static TResult ApplyInvocationContext<TResult>(TResult result, object comObj, bool forceLateInvoke)
-        {
-            if (result is ComProxy asComProxy)
-            {
+        public static TResult ApplyInvocationContext<TResult>(TResult result, object comObj, bool forceLateInvoke) {
+            if (result is ComProxy asComProxy) {
                 if (asComProxy.ComBehavior == null)
                     asComProxy.AttachBehavior((comObj as ComStub)?.ComBehavior);
                 asComProxy._dbgTypeInfo = InvocationContext.LastPathLabel;
@@ -760,23 +668,20 @@ namespace UiaAdapter.TemplateSyntax
             return ApplyInvocationContext(ResolveWrapper<TWrapper>(DirectGet(comObj, name, invokeMode, knownDispId, forceLateInvoke, typeKey), name), comObj, forceLateInvoke);
         }
 
-        public static TValue GetValue<TValue>(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "") where TValue : struct
-        {
+        public static TValue GetValue<TValue>(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "") where TValue : struct {
             if (TryGetBlockedMessage(comObj, out _))
                 return default(TValue);
             return ResolveValue<TValue>(DirectGet(comObj, name, invokeMode, knownDispId, forceLateInvoke, typeKey), name);
         }
 
-        public static string GetString(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "")
-        {
+        public static string GetString(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "") {
             if (TryGetBlockedMessage(comObj, out string message))
                 return $"[{message}]";
             object raw = DirectGet(comObj, name, invokeMode, knownDispId, forceLateInvoke, typeKey);
             return raw?.ToString() ?? string.Empty;
         }
 
-        public static object GetDynamicValue(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "")
-        {
+        public static object GetDynamicValue(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey = "") {
             if (TryGetBlockedMessage(comObj, out string message))
                 return $"[{message}]";
             object raw = DirectGet(comObj, name, invokeMode, knownDispId, forceLateInvoke, typeKey);
@@ -794,34 +699,29 @@ namespace UiaAdapter.TemplateSyntax
         }
 
         public static TWrapper InvokeCollectionItem<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TWrapper>(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) where TWrapper : class {
-            try
-            {
+            try {
                 return InvokeWrapper<TWrapper>(comObj, name, invokeMode, forceLateInvoke, knownDispId, typeKey, args);
             }
             catch (global::System.Runtime.InteropServices.COMException exception) when (
-                MissingConfig.ReturnMissingForMissingCollectionItem && MissingConfig.MissingCollectionItemHResults.Contains(exception.HResult))
-            {
+                MissingConfig.ReturnMissingForMissingCollectionItem && MissingConfig.MissingCollectionItemHResults.Contains(exception.HResult)) {
                 return ApplyInvocationContext(ComProxy.Missing<TWrapper>(), comObj, forceLateInvoke);
             }
         }
 
-        public static TValue InvokeValue<TValue>(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) where TValue : struct
-        {
+        public static TValue InvokeValue<TValue>(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) where TValue : struct {
             if (TryGetBlockedMessage(comObj, out _))
                 return default(TValue);
             return ResolveValue<TValue>(DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.Method, typeKey, args), name);
         }
 
-        public static string InvokeString(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args)
-        {
+        public static string InvokeString(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) {
             if (TryGetBlockedMessage(comObj, out string message))
                 return $"[{message}]";
             object raw = DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.Method, typeKey, args);
             return raw?.ToString() ?? string.Empty;
         }
 
-        public static object InvokeDynamicValue(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args)
-        {
+        public static object InvokeDynamicValue(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) {
             if (TryGetBlockedMessage(comObj, out string message))
                 return $"[{message}]";
             object raw = DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.Method, typeKey, args);
@@ -832,33 +732,28 @@ namespace UiaAdapter.TemplateSyntax
             return raw;
         }
 
-        public static void SetProperty<T>(object comObj, string name, InvokeMode invokeMode, T value, bool forceLateInvoke, int knownDispId, string typeKey)
-        {
+        public static void SetProperty<T>(object comObj, string name, InvokeMode invokeMode, T value, bool forceLateInvoke, int knownDispId, string typeKey) {
             DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.PropertyPut, typeKey, new object[] { value });
         }
 
-        public static void SetIndexer(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, bool isSetRef, string typeKey, object[] args)
-        {
+        public static void SetIndexer(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, bool isSetRef, string typeKey, object[] args) {
             DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, isSetRef ? ComInvokeKind.PropertyPutRef : ComInvokeKind.PropertyPut, typeKey, args);
         }
 
         public static object GetProperty(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey) => DirectGet(comObj, name, invokeMode, knownDispId, forceLateInvoke, typeKey);
 
-        public static object GetIndexer(object comObj, object index, InvokeMode invokeMode, bool forceLateInvoke, string typeKey)
-        {
-            try
-            {
+        public static object GetIndexer(object comObj, object index, InvokeMode invokeMode, bool forceLateInvoke, string typeKey) {
+            try {
                 return DirectInvoke(comObj, "Item", invokeMode, forceLateInvoke, 0, ComInvokeKind.PropertyGet, typeKey, new object[] { index });
             }
             catch (global::System.Runtime.InteropServices.COMException exception) when (
-                MissingConfig.ReturnMissingForMissingCollectionItem && MissingConfig.MissingCollectionItemHResults.Contains(exception.HResult))
-            {
+                MissingConfig.ReturnMissingForMissingCollectionItem && MissingConfig.MissingCollectionItemHResults.Contains(exception.HResult)) {
                 return ComProxy.Missing();
             }
         }
 
         public static void SetProperty(object comObj, string name, object value, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey) => DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.PropertyPut, typeKey, new object[] { value });
-        public static void SetPropertyRef(object comObj, string name, object value, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey) => DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.PropertyPutRef, typeKey, new object[] { value });
+        public static void SetPropertyRef(object comObj, string name, object value, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey) => DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.PropertyPutRef, typeKey, new object[] { ComProxy.UnwrapInterface(value) });
         public static object InvokeMethod(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, params object[] args) => DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.Method, "", args);
         public static object InvokeMethod(object comObj, string name, InvokeMode invokeMode, bool forceLateInvoke, int knownDispId, string typeKey, object[] args) => DirectInvoke(comObj, name, invokeMode, forceLateInvoke, knownDispId, ComInvokeKind.Method, typeKey, args);
     }

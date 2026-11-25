@@ -404,16 +404,18 @@ namespace UiaAdapter.TemplateSyntax {
                     return null;
                 if (asComProxy.Value != null)
                     return Unwrap(asComProxy.Value);
-                return asComProxy.ComPointer;
+                return asComProxy.ComPointer != IntPtr.Zero ? (object)asComProxy.ComPointer : null;
             }
             if (value is IComWrapper wrapper)
-                return wrapper.ComPointer;
+                return wrapper.ComPointer != IntPtr.Zero ? (object)wrapper.ComPointer : null;
             if (value is global::System.Enum e)
                 return global::System.Convert.ToInt32(e);
             return value;
         }
 
         public static object UnwrapForMethod(object value) => Unwrap(value) ?? global::System.Type.Missing;
+
+        public static object UnwrapInterface(object value) => Unwrap(value) ?? ComNullDispatch.Instance;
 
         protected TValue GetValue<TValue>(string name, int knownDispId) where TValue : struct {
             return ComInvoker.GetValue<TValue>(this, name, ComBehavior.InvocationMode, ForceLateInvoke, knownDispId, TypeCacheKey);
@@ -484,9 +486,9 @@ namespace UiaAdapter.TemplateSyntax {
             object[] args = new object[indices.Length + 1];
             for (int i = 0; i < indices.Length; i++)
                 args[i] = indices[i] ?? global::System.Type.Missing;
-            args[args.Length - 1] = value;
             bool isComReference = value is IComWrapper wrapper && wrapper.ComPointer != IntPtr.Zero;
             bool isSetRef = supportsPutRef && (!supportsPut || isComReference);
+            args[args.Length - 1] = isSetRef ? UnwrapInterface(value) : value;
             ComInvoker.SetIndexer(this, name, ComBehavior.InvocationMode, ForceLateInvoke, knownDispId, isSetRef, TypeCacheKey, args);
         }
 
@@ -833,21 +835,36 @@ namespace UiaAdapter.TemplateSyntax {
         }
 
         internal static string GetDebuggerTypeName(object value) {
-            if (value == null) return "object";
-            if (value is string) return "string";
-            if (value is bool) return "bool";
-            if (value is byte) return "byte";
-            if (value is sbyte) return "sbyte";
-            if (value is short) return "short";
-            if (value is ushort) return "ushort";
-            if (value is int) return "int";
-            if (value is uint) return "uint";
-            if (value is long) return "long";
-            if (value is ulong) return "ulong";
-            if (value is float) return "float";
-            if (value is double) return "double";
-            if (value is decimal) return "decimal";
-            if (value is char) return "char";
+            if (value == null)
+                return "object";
+            if (value is string)
+                return "string";
+            if (value is bool)
+                return "bool";
+            if (value is byte)
+                return "byte";
+            if (value is sbyte)
+                return "sbyte";
+            if (value is short)
+                return "short";
+            if (value is ushort)
+                return "ushort";
+            if (value is int)
+                return "int";
+            if (value is uint)
+                return "uint";
+            if (value is long)
+                return "long";
+            if (value is ulong)
+                return "ulong";
+            if (value is float)
+                return "float";
+            if (value is double)
+                return "double";
+            if (value is decimal)
+                return "decimal";
+            if (value is char)
+                return "char";
             return value.GetType().FullName ?? value.GetType().Name;
         }
     }
@@ -1868,6 +1885,25 @@ namespace UiaAdapter.TemplateSyntax {
 
         public static TWrapper As<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TWrapper>(this object ComStub) where TWrapper : class {
             return (TWrapper)As(typeof(TWrapper), ComStub);
+        }
+
+        public static ComProxy Resolve(this ComProxy proxy) {
+            if (proxy == null || proxy.IsMissing || proxy.ComPointer == IntPtr.Zero)
+                return proxy ?? ComProxy.Missing();
+
+            ComProxy resolved = ComProxyFactory.Resolve(proxy.ComPointer);
+            if (resolved.GetType() == typeof(ComProxy) || resolved.GetType() == proxy.GetType()) {
+                if (!ReferenceEquals(resolved, proxy))
+                    resolved.Dispose();
+                return proxy;
+            }
+
+            if (proxy.ComBehavior != null && resolved.ComBehavior == null)
+                resolved.AttachBehavior(proxy.ComBehavior);
+            resolved.IsPoly = proxy.IsPoly;
+            resolved.ForceLateInvoke = proxy.ForceLateInvoke;
+            resolved._dbgTypeInfo = proxy._dbgTypeInfo;
+            return resolved;
         }
     }
 

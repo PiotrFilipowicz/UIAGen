@@ -13,36 +13,34 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace UiaAdapter.ComRuntime
-{
-    public interface IComWrapper
-    {
+namespace UiaAdapter.ComRuntime {
+    public interface IComWrapper {
         IntPtr ComPointer { get; }
     }
 
-    public interface IComVariantValue : IComWrapper
-    {
+    public interface IComVariantValue : IComWrapper {
         bool IsMissing { get; }
         object Value { get; }
     }
 
-    public interface IComBindingState : IComVariantValue
-    {
+    public interface IComBindingState : IComVariantValue {
         bool IsPoly { get; set; }
         bool IsLate { get; set; }
         bool ForceLateInvoke { get; set; }
     }
 
-    public sealed class ComPointerLease : IComWrapper, IDisposable
-    {
+    public sealed class ComNullDispatch {
+        public static readonly ComNullDispatch Instance = new ComNullDispatch();
+        private ComNullDispatch() { }
+    }
+
+    public sealed class ComPointerLease : IComWrapper, IDisposable {
         public IntPtr ComPointer { get; private set; }
 
         public ComPointerLease(IntPtr pointer) : this(pointer, addRef: true) { }
 
-        private ComPointerLease(IntPtr pointer, bool addRef)
-        {
-            if (!ComStubOps.TryGetVTableFunction(pointer, 1, out _))
-            {
+        private ComPointerLease(IntPtr pointer, bool addRef) {
+            if (!ComStubOps.TryGetVTableFunction(pointer, 1, out _)) {
                 throw new InvalidOperationException("Cannot acquire a reference to an invalid COM pointer.");
             }
             if (addRef)
@@ -52,24 +50,23 @@ namespace UiaAdapter.ComRuntime
 
         public static ComPointerLease TakeOwnership(IntPtr pointer) => new ComPointerLease(pointer, addRef: false);
 
-        public void Dispose()
-        {
+        public void Dispose() {
             IntPtr pointer = ComPointer;
-            if (pointer == IntPtr.Zero) return;
+            if (pointer == IntPtr.Zero)
+                return;
             ComPointer = IntPtr.Zero;
             ComStubOps.Release(pointer);
             GC.SuppressFinalize(this);
         }
 
-        ~ComPointerLease()
-        {
-            try { Dispose(); } catch { }
+        ~ComPointerLease() {
+            try { Dispose(); }
+            catch { }
         }
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct SAFEARRAYBOUND
-    {
+    public struct SAFEARRAYBOUND {
         public uint cElements;
         public int lLbound;
     }

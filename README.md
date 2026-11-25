@@ -4,7 +4,7 @@
 
 # Universal Interop Assembly (UIA) Code Generator
 
-**Build-time code generator (`UIAGen.exe`)** turns any Windows COM Type Library into a clean, statically typed, **Native AOT-compatible C# adapter** for .NET 10.
+**Build-time code generator (`UIAGen.exe`)** turns any Windows COM Type Library into a clean, statically typed, **Native AOT-compatible C# adapter** for .NET 10 and .NET Standard 2.0 (including .NET Framework 4.8).
 
 Say goodbye to Primary Interop Assemblies (PIA), GAC deployment nightmares, and the slow C# `dynamic` binder.
 
@@ -23,6 +23,7 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 | Feature | Legacy `tlbimp.exe` / PIA | C# `dynamic` | Manual `ComWrappers` | **UIAGen** |
 | :--- | :---: | :---: | :---: | :---: |
 | **.NET 8 / 9 / 10 Support** | ⚠️ Limited (No `tlbimp`) | ✅ Yes | ✅ Yes | ✅ **Native** |
+| **.NET Framework 4.8 (`net48`) Support** | ✅ Yes (with PIA/GAC) | ✅ Yes | ❌ No | ✅ **Yes (`netstandard2.0`, zero PIA)** |
 | **Native AOT & Trimming** | ❌ Broken | ❌ Broken | ✅ Yes | ✅ **100% Compatible** |
 | **Zero Manual Boilerplate** | ✅ Auto-generated | ✅ No wrappers | ❌ Painful to write | ✅ **1-Command CLI** |
 | **Full IntelliSense & Type Safety** | ✅ Yes | ❌ Runtime only | ✅ Yes | ✅ **Strongly Typed** |
@@ -34,10 +35,20 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 ## Why is UIA unique?
 
 * **True Native AOT & Trimming Support:** Unlike legacy RCW/CCW interop, UIA generates static C# wrappers that call native COM vtables directly—compiling cleanly into standalone Native AOT executables.
+* **Works on `.NET Framework 4.8` Too:** Generated adapter projects multi-target `net10.0;netstandard2.0`, and the test suite passes under `net48` as well—making UIA a drop-in, PIA-free upgrade path even if you cannot migrate off .NET Framework 4.8 yet.
 * **Zero PIA & Zero `dynamic`:** Ship your application without hunting for version-specific Primary Interop Assemblies or sacrificing performance and type safety to `dynamic`.
 * **Proven Compilation Across 500+ COM Servers:** Tested at scale against more than 500 registered Windows system COM libraries, as well as massive, real-world object models like Microsoft Office, Adobe InDesign, and Autodesk AutoCAD.
 * **Smart Static Typing:** Infers strongly typed collection elements (`Stories` → `Story`), provides runtime polymorphic casting (`As<T>()`), and cleanly separates missing COM objects from failed `HRESULT`s.
 * **Deterministic Memory Control:** Built-in reference lifecycle tracking (`Tracker` / `Dispose`) ensures COM servers actually close when your code finishes—no lingering zombie processes in Task Manager.
+
+---
+
+## .NET Framework 4.8 (`net48`) Support
+
+If your application cannot yet migrate away from **.NET Framework 4.8 (`net48`)**, you can still use generated UIA adapters without PIAs or GAC dependencies:
+
+* **Multi-targeted output (`net10.0;netstandard2.0`):** Every generated adapter project targets both `net10.0` and `netstandard2.0`, and the test suite passes on `net48`. Your `net48` application can reference the `netstandard2.0` adapter build directly (or compile the generated sources with `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`).
+* **Single-assembly merging & trimming with `ILMerge`:** On `net48`, you can merge and trim/internalize the generated adapter assembly into your application binary using **ILMerge**, keeping deployment self-contained and ready for a smooth future migration to .NET 10 and Native AOT.
 
 ---
 

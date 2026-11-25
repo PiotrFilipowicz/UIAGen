@@ -32,7 +32,7 @@ public partial class UiaAdapterWrapper {
         public bool IsSetRef { get; set; }
     }
 
-    private sealed record ParamModel(string Name, string RawType, bool IsOptional, bool HasDefault, object? DefaultValue, string? FirstEnumMember);
+    private sealed record ParamModel(string Name, string RawType, bool IsOptional, bool HasDefault, object? DefaultValue, string? FirstEnumMember, bool IsInterface);
 
     private class FuncModel {
         public string Name { get; set; } = "";

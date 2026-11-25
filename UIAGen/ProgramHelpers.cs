@@ -647,7 +647,7 @@ internal static class ProgramHelpers {
             		<PlatformTarget>x64</PlatformTarget>
             		<Platforms>x64</Platforms>
             		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-            		<LangVersion>12.0</LangVersion>
+            		<LangVersion>latest</LangVersion>
             	</PropertyGroup>
             	<PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
             		<Nullable>enable</Nullable>

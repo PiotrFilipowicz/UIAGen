@@ -12,7 +12,12 @@ The generated API exposes concrete C# wrapper classes for nearly all objects in 
 
 [Inferring collection element types](#inferring-collection-element-types) is a key part of static wrapper binding: it keeps indexing and `foreach` statically typed even when the COM type library does not declare the element type.
 
-The exceptions are boundaries where COM metadata does not identify a single concrete result type, such as a polymorphic property declared as `object` or `ComProxy`. When you know the expected type, use `As<TWrapper>()` to adapt the result at runtime and continue with a statically typed variable. For example, PowerPoint exposes its chart's workbook as `object`, but the application can work with it as an Excel wrapper:
+The exceptions are boundaries where COM metadata does not expose the concrete runtime type directly. This occurs in two situations:
+
+- **Untyped COM boundaries**, such as a polymorphic property declared as `object` or `ComProxy` (for example, `Document.Selection`).
+- **Polymorphic base wrappers**, where the type library declares a concrete base interface or collection element type, such as InDesign's `MenuElement` in `MenuElements`, even though individual runtime objects are more specific types such as `MenuItem` or `Submenu`. Because generated wrappers inherit directly from `ComProxy` rather than mirroring conceptual COM base-class hierarchies, members specific to a derived COM object are only exposed on that derived wrapper class.
+
+When you know the expected type, use `As<TWrapper>()` to adapt the result at runtime and continue with a statically typed variable. When the concrete subtype is not known in advance on a polymorphic base wrapper, call `Resolve()` to materialize the registered runtime wrapper via `ComProxyFactory` and dispatch with standard C# pattern matching. For example, PowerPoint exposes its chart's workbook as `object`, but the application can work with it as an Excel wrapper:
 
 ```csharp
 using MSOfficeAdapter;
@@ -23,7 +28,7 @@ Excel.Workbook workbook = chart.ChartData.Workbook.As<Excel.Workbook>();
 // IntelliSense now offers Excel.Workbook members, such as Worksheets.
 ```
 
-Choose the wrapper that matches the actual COM object. The conversion selects the managed wrapper; it does not change the COM object. **No `dynamic` variable is needed**, even when the concrete wrapper is chosen at runtime or COM members are invoked by name.
+Choose the wrapper that matches the actual COM object. `As<TWrapper>()` wraps the underlying COM pointer in the target managed wrapper without validating the runtime COM type up front; it does not change the COM object itself. **No `dynamic` variable is needed**, even when the concrete wrapper is chosen at runtime or COM members are invoked by name.
 
 ## Architecture
 
@@ -151,6 +156,46 @@ Call `GetSelectedStories(app.ActiveDocument)` from an STA thread with an InDesig
 
 The `TextFrame` pattern checks the wrapper type at runtime and gives `frame` a static type, so `frame.ParentStory` has IntelliSense and compile-time checking without `As<TextFrame>()` or C# `dynamic`. A polymorphic result does not by itself force late COM invocation: the runtime chooses how to resolve the `DISPID` independently of how the caller handles the result.
 
+### Polymorphic base wrappers: resolving and adapting `MenuElement`
+
+A typed wrapper does not guarantee that the COM type library exposes every member of the runtime instance through that static type. In InDesign, `Menu.MenuElements` is statically typed as `Objects<MenuElement>`, and `MenuElement` only declares base members (`EventListeners`, `Events`, `Index`, `Parent`). At runtime, individual elements in `MenuElements` can be concrete subtypes such as `MenuItem`, `Submenu`, or `MenuSeparator`.
+
+When inspecting a `MenuElement` in the Visual Studio debugger, the **Value** column already surfaces the runtime COM type name (obtained via `ComObjectExtensions.GetComTypeName`), even when the **Type** column shows `AdobeAdapter.MenuElement`. In application code, use `As<TWrapper>()` when you know the expected subtype (for example, `element.As<MenuItem>()`), or call `Resolve()` to materialize the concrete wrapper registered in `ComProxyFactory` and dispatch with pattern matching:
+
+```csharp
+using AdobeAdapter;
+using AdobeAdapter.InDesign;
+
+static void InspectMenuElements(Menu menu)
+{
+    if (menu.IsMissing)
+        return;
+
+    foreach (MenuElement element in menu.MenuElements)
+    {
+        switch (element.Resolve())
+        {
+            case MenuItem item:
+                // Statically typed access to MenuItem members:
+                string title = item.Title;
+                bool enabled = item.Enabled;
+                bool isChecked = item.Checked;
+                MenuAction action = item.AssociatedMenuAction;
+                break;
+
+            case Submenu submenu:
+                InspectMenuElements(submenu.As<Menu>());
+                break;
+
+            case MenuSeparator:
+                break;
+        }
+    }
+}
+```
+
+Note the distinction between `ToComProxy()` and `Resolve()`: `ToComProxy()` only resolves untyped `ComProxy` wrappers (`GetType() == typeof(ComProxy)`) or raw COM pointers (`ComPointerLease` / `IntPtr`), leaving already typed base wrappers such as `MenuElement` unchanged. `Resolve()` queries `ComProxyFactory.Resolve(proxy.ComPointer)` regardless of the wrapper's static C# type, preserves `ComBehavior` (including `Tracker` ownership), `IsPoly`, and `ForceLateInvoke`, and falls back to the original wrapper if no more specific type is registered. Calling `As<TWrapper>()` directly remains available when the target subtype is known statically.
+
 ### Microsoft Word automation
 
 Run this from an STA entry point after generating the `MSOfficeAdapter` sources:
@@ -254,7 +299,7 @@ Found 4 type libraries for 'ObjClassImpLibAdapter' (3 external - stdole, AXDBLib
 Found 3 type libraries for 'ACCTRLLibAdapter' (2 external - stdole, MSForms).
 Found 3 type libraries for 'AcDwgFilterImpLibAdapter' (2 external - stdole, MSForms).
 Found 3 type libraries for 'ACFOCUSCTRLLibAdapter' (2 external - stdole, MSForms).
-Found 3 type libraries for 'ACHELPLibAdapter' (2 external - stdole, MSForms).
+Found 3 type libraries for 'ACHELPLibAdapter' (2 external - MSForms).
 Found 3 type libraries for 'ACINETENGINELibAdapter' (2 external - stdole, MSForms).
 Found 3 type libraries for 'ACSIGNCORE16LibAdapter' (2 external - stdole, MSForms).
 Found 3 type libraries for 'AdComFolderWatchLibAdapter' (2 external - stdole, MSForms).

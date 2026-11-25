@@ -58,6 +58,38 @@ public partial class UiaAdapterWrapper {
         return Sanitize(name);
     }
 
+    private static bool IsInterfaceTypeDesc(TYPEDESC descriptor, ITypeInfo typeInfo, int depth = 0) {
+        if (depth > 3)
+            return false;
+
+        VarEnum vt = (VarEnum)descriptor.vt;
+        if (vt == VarEnum.VT_PTR) {
+            if (descriptor.lpValue == IntPtr.Zero)
+                return false;
+            TYPEDESC inner = Marshal.PtrToStructure<TYPEDESC>(descriptor.lpValue);
+            return IsInterfaceTypeDesc(inner, typeInfo, depth + 1);
+        }
+
+        if (vt is VarEnum.VT_DISPATCH or VarEnum.VT_UNKNOWN)
+            return true;
+
+        if (vt == VarEnum.VT_USERDEFINED && descriptor.lpValue != IntPtr.Zero) {
+            try {
+                typeInfo.GetRefTypeInfo(unchecked((int)descriptor.lpValue), out ITypeInfo refInfo);
+                if (refInfo == null)
+                    return false;
+                using var attributes = TypeInfoDescriptor.TypeAttributes(refInfo);
+                TYPEATTR attr = Marshal.PtrToStructure<TYPEATTR>(attributes.Pointer);
+                return attr.typekind is TYPEKIND.TKIND_DISPATCH or TYPEKIND.TKIND_INTERFACE or TYPEKIND.TKIND_COCLASS;
+            }
+            catch {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     private FuncModel ReadMethod(ITypeInfo typeInfo, FUNCDESC descriptor, string name,
         string[] names, int nameCount) {
         var method = new FuncModel {
@@ -85,7 +117,8 @@ public partial class UiaAdapterWrapper {
             string? firstEnumMember = isOptional && isEnum && (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
                 ? ReadFirstEnumMember(parameter.tdesc, typeInfo)
                 : null;
-            method.Params.Add(new ParamModel(parameterName, rawType, isOptional, hasDefault, defaultValue, firstEnumMember));
+            bool isInterface = IsInterfaceTypeDesc(parameter.tdesc, typeInfo);
+            method.Params.Add(new ParamModel(parameterName, rawType, isOptional, hasDefault, defaultValue, firstEnumMember, isInterface));
         }
         return method;
     }
