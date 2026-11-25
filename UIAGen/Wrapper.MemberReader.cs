@@ -36,6 +36,28 @@ public partial class UiaAdapterWrapper {
         return true;
     }
 
+    private static string? ReadFirstEnumMember(TYPEDESC descriptor, ITypeInfo typeInfo) {
+        for (int depth = 0; (VarEnum)descriptor.vt == VarEnum.VT_PTR && depth < 3; depth++) {
+            if (descriptor.lpValue == IntPtr.Zero)
+                return null;
+            descriptor = Marshal.PtrToStructure<TYPEDESC>(descriptor.lpValue);
+        }
+
+        if ((VarEnum)descriptor.vt != VarEnum.VT_USERDEFINED)
+            return null;
+
+        typeInfo.GetRefTypeInfo(unchecked((int)descriptor.lpValue), out ITypeInfo enumInfo);
+        using var attributes = TypeInfoDescriptor.TypeAttributes(enumInfo);
+        TYPEATTR attr = Marshal.PtrToStructure<TYPEATTR>(attributes.Pointer);
+        if (attr.typekind != TYPEKIND.TKIND_ENUM || attr.cVars == 0)
+            return null;
+
+        using var variable = TypeInfoDescriptor.Variable(enumInfo, 0);
+        VARDESC varDesc = Marshal.PtrToStructure<VARDESC>(variable.Pointer);
+        enumInfo.GetDocumentation(varDesc.memid, out string name, out _, out _, out _);
+        return Sanitize(name);
+    }
+
     private FuncModel ReadMethod(ITypeInfo typeInfo, FUNCDESC descriptor, string name,
         string[] names, int nameCount) {
         var method = new FuncModel {
@@ -59,7 +81,11 @@ public partial class UiaAdapterWrapper {
             PARAMFLAG flags = parameter.desc.paramdesc.wParamFlags;
             bool descriptorOptional = descriptor.cParamsOpt > 0 && index >= descriptor.cParams - descriptor.cParamsOpt;
             bool isOptional = descriptorOptional || (flags & (PARAMFLAG.PARAMFLAG_FOPT | PARAMFLAG.PARAMFLAG_FHASDEFAULT)) != 0;
-            method.Params.Add(new ParamModel(parameterName, rawType, isOptional, hasDefault, defaultValue));
+            bool isEnum = KnownEnums.Contains(rawType) || KnownExternalEnums.Contains(rawType);
+            string? firstEnumMember = isOptional && isEnum && (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
+                ? ReadFirstEnumMember(parameter.tdesc, typeInfo)
+                : null;
+            method.Params.Add(new ParamModel(parameterName, rawType, isOptional, hasDefault, defaultValue, firstEnumMember));
         }
         return method;
     }

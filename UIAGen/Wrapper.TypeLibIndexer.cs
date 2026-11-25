@@ -130,7 +130,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using UiaAdapter.ComRuntime;
 {{sharedUsing}}
-namespace {{targetNamespace}};
+namespace {{targetNamespace}} {
 
 
 """);

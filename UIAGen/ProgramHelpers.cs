@@ -603,7 +603,7 @@ internal static class ProgramHelpers {
         return new StreamReader(stream);
     }
 
-    private static void WriteGeneratedStream(StreamReader reader, string generatedName, string Header) {
+    private static void WriteGeneratedStream(StreamReader reader, string generatedName, string Header, string? eol) {
         using TextWriter writer = File.CreateText(generatedName);
         writer.Write(Header);
         string? line;
@@ -627,32 +627,38 @@ internal static class ProgramHelpers {
             }
             writer.WriteLine(line);
         }
+        if(eol != null)
+            writer.WriteLine(eol);
     }
 
 
     static void CreateTemplateFile(StringBuilder sb, string outputDirectory, string prefixName, string csName) {
         using var reader = GetStreamFromStringBuilder(sb);
         string fileName = $"Generated.UIA.{prefixName}.{csName}";
-        WriteGeneratedStream(reader, $"{outputDirectory}\\{fileName}", LicenseHeader(fileName));
+        WriteGeneratedStream(reader, $"{outputDirectory}\\{fileName}", LicenseHeader(fileName), "}");
     }
 
     private static string CreateProjectFile(string outputDirectory, string projectName) {
         string project = """
             <Project Sdk="Microsoft.NET.Sdk">
             	<PropertyGroup>
-            		<TargetFramework>net10.0</TargetFramework>
+            		<TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>
             		<ImplicitUsings>enable</ImplicitUsings>
-            		<Nullable>enable</Nullable>
             		<PlatformTarget>x64</PlatformTarget>
-            		<EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+            		<Platforms>x64</Platforms>
             		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+            		<LangVersion>12.0</LangVersion>
+            	</PropertyGroup>
+            	<PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+            		<Nullable>enable</Nullable>
+            		<EnableDefaultCompileItems>true</EnableDefaultCompileItems>
             		<IsAotCompatible>true</IsAotCompatible>
             		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
             		<EnableAotAnalyzer>true</EnableAotAnalyzer>
             		<DebugType>full</DebugType>
             	</PropertyGroup>
             </Project>
-            
+                                    
             """;
         string projectFilePath = Path.Combine(outputDirectory, projectName);
         if (File.Exists(projectFilePath)) {
@@ -676,7 +682,7 @@ internal static class ProgramHelpers {
             string csFileName = $"Runtime.{fileName}";
             string generatedName = $"{outputDirectory}\\{csFileName}";
             using StreamReader reader = GetStreamFromResource(resourceName);
-            WriteGeneratedStream(reader, generatedName, LicenseHeader(csFileName));
+            WriteGeneratedStream(reader, generatedName, LicenseHeader(csFileName), null);
 
         }
     }

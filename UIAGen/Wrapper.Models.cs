@@ -32,8 +32,8 @@ public partial class UiaAdapterWrapper {
         public bool IsSetRef { get; set; }
     }
 
-    private sealed record ParamModel(string Name, string RawType, bool IsOptional, bool HasDefault = false, object? DefaultValue = null); 
-    
+    private sealed record ParamModel(string Name, string RawType, bool IsOptional, bool HasDefault, object? DefaultValue, string? FirstEnumMember);
+
     private class FuncModel {
         public string Name { get; set; } = "";
         public int DispId { get; set; }

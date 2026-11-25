@@ -102,7 +102,7 @@ public static partial class ComProxyFactory {
     private const string AdobeObjectsMembers = /*lang=c#*/ """
     
     public override int Count => GetValue<int>(nameof(Count), 1668183141);
-    public void Add(object @object, object? index = default) => InvokeVoid("Add", 1668441452, @object, index);
+    public void Add(object @object, object index = default) => InvokeVoid("Add", 1668441452, @object, index);
     public ComProxy FirstItem() => InvokeCollectionItem<ComProxy>("FirstItem", 1718186611);
     public ComProxy LastItem() => InvokeCollectionItem<ComProxy>("LastItem", 1818325876);
     public ComProxy MiddleItem() => InvokeCollectionItem<ComProxy>("MiddleItem", 1835623524);

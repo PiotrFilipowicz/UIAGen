@@ -1,8 +1,6 @@
 ![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.png)
 
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
-[![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/) [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows) [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE) ![.NET 10](...) ![OS License](...) [![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=for-the-badge&logo=nuget)](https://www.nuget.org/packages/UIAGen) [![NuGet Downloads](https://img.shields.io/nuget/dt/UIAGen.svg?style=for-the-badge&logo=nuget)](https://www.nuget.org/packages/UIAGen)
 
 # Universal Interop Assembly (UIA) Code Generator
 

@@ -179,11 +179,14 @@ public class {{safeTypeName}}{{inheritance}} {
         for (int index = 0; index < debuggerMembers.Length; index++)
             AppendLine($"        new ComGeneratedMember({debuggerMembers[index].Metadata}, {index}),");
         AppendLine("    ];");
-        AppendLine("    internal override object? ReadDebuggerProperty(int index) => index switch {");
+
+        AppendLine("    internal override object ReadDebuggerProperty(int index) => index switch {");
         for (int index = 0; index < debuggerMembers.Length; index++)
             AppendLine($"        {index} => {debuggerMembers[index].Read},");
         AppendLine("        _ => throw new global::System.ArgumentOutOfRangeException(nameof(index))");
         AppendLine("    };");
+
+        AppendLine("");
 
         if (indexerHasGet || indexerHasSet || isCollection) {
             emittedMemberNames.Add("Item");
@@ -418,7 +421,7 @@ public class {{safeTypeName}}{{inheritance}} {
             }
 
             for (int i = 0; i < fn.Params.Count; i++) {
-                var (pName, pRawType, isOptional, hasDefault, defaultValue) = fn.Params[i];
+                var (pName, pRawType, isOptional, hasDefault, defaultValue, firstEnumMember) = fn.Params[i];
                 bool canEmitDefault = isOptional && i > lastRequiredIndex;
 
                 string pWrapType = GetCanonicalTypeName(ResolveWrapperTypeName(pRawType, pName));
@@ -432,40 +435,40 @@ public class {{safeTypeName}}{{inheritance}} {
                     : KnownEnums.Contains(cleanPWrapType);
 
                 if (pRawType == "void" || cleanPWrapType == "void") {
-                    declParams.Add(canEmitDefault ? $"object? {pName} = default" : $"object? {pName}");
+                    declParams.Add(canEmitDefault ? $"object {pName} = default" : $"object {pName}");
                 }
                 else if (isParamEnum) {
                     string qualified = QualifyType(cleanPWrapType);
                     if (canEmitDefault) {
-                        string defaultLiteral = FormatEnumDefaultLiteral(hasDefault, defaultValue, qualified);
-                        declParams.Add($"{qualified}? {pName} = {defaultLiteral}");
+                        string defaultLiteral = FormatEnumDefaultLiteral(hasDefault, defaultValue, qualified, firstEnumMember);
+                        declParams.Add($"{qualified} {pName} = {defaultLiteral}");
                     }
                     else {
-                        declParams.Add(isOptional ? $"{qualified}? {pName}" : $"{qualified} {pName}");
+                        declParams.Add(isOptional ? $"{qualified} {pName}" : $"{qualified} {pName}");
                     }
                 }
                 else if (pRawType == "string" || pName.Equals("VersionComments", StringComparison.OrdinalIgnoreCase)) {
                     if (canEmitDefault) {
                         string defaultLiteral = FormatStringDefaultLiteral(hasDefault, defaultValue);
-                        declParams.Add($"string? {pName} = {defaultLiteral}");
+                        declParams.Add($"string {pName} = {defaultLiteral}");
                     }
                     else {
-                        declParams.Add($"string? {pName}");
+                        declParams.Add($"string {pName}");
                     }
                 }
                 else if (IsPrimitiveType(cleanPWrapType)) {
                     string qualified = QualifyType(cleanPWrapType);
                     if (canEmitDefault) {
                         string defaultLiteral = FormatPrimitiveDefaultLiteral(hasDefault, defaultValue, cleanPWrapType);
-                        declParams.Add($"{qualified}? {pName} = {defaultLiteral}");
+                        declParams.Add($"{qualified} {pName} = {defaultLiteral}");
                     }
                     else {
-                        declParams.Add(isOptional ? $"{qualified}? {pName}" : $"{qualified} {pName}");
+                        declParams.Add(isOptional ? $"{qualified} {pName}" : $"{qualified} {pName}");
                     }
                 }
                 else {
                     string qualified = QualifyType(cleanPWrapType);
-                    declParams.Add(canEmitDefault ? $"{qualified}? {pName} = default" : $"{qualified}? {pName}");
+                    declParams.Add(canEmitDefault ? $"{qualified} {pName} = default" : $"{qualified} {pName}");
                 }
 
                 passParamsLate.Add(pName);
@@ -521,21 +524,16 @@ public class {{safeTypeName}}{{inheritance}} {
         """);
     }
 
-    private static string FormatEnumDefaultLiteral(bool hasDefault, object? defaultValue, string qualifiedEnumType) {
+    private static string FormatEnumDefaultLiteral(bool hasDefault, object? defaultValue, string qualifiedEnumType, string? firstEnumMember) {
         if (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
-            return "null";
+            return firstEnumMember is null ? "default" : $"{qualifiedEnumType}.{firstEnumMember}";
 
-        try {
-            long rawLong = Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture);
-            int enumValue = unchecked((int)rawLong);
-            string valueText = enumValue < 0
-                ? $"({enumValue.ToString(CultureInfo.InvariantCulture)})"
-                : enumValue.ToString(CultureInfo.InvariantCulture);
-            return $"({qualifiedEnumType}){valueText}";
-        }
-        catch {
-            return "null";
-        }
+        long rawLong = Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture);
+        int enumValue = unchecked((int)rawLong);
+        string valueText = enumValue < 0
+            ? $"({enumValue.ToString(CultureInfo.InvariantCulture)})"
+            : enumValue.ToString(CultureInfo.InvariantCulture);
+        return $"({qualifiedEnumType}){valueText}";
     }
 
     private static string FormatStringDefaultLiteral(bool hasDefault, object? defaultValue) {
@@ -593,64 +591,59 @@ public class {{safeTypeName}}{{inheritance}} {
 
     private static string FormatPrimitiveDefaultLiteral(bool hasDefault, object? defaultValue, string primitiveType) {
         if (!hasDefault || defaultValue is null || defaultValue == Type.Missing)
-            return "null";
+            return primitiveType == "bool" ? "false" : "0";
 
-        try {
-            switch (primitiveType) {
-                case "bool":
-                    return Convert.ToBoolean(defaultValue, CultureInfo.InvariantCulture) ? "true" : "false";
-                case "byte":
-                    return $"(byte){Convert.ToByte(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
-                case "sbyte": {
-                    sbyte v = Convert.ToSByte(defaultValue, CultureInfo.InvariantCulture);
-                    return v < 0
-                        ? $"(sbyte)({v.ToString(CultureInfo.InvariantCulture)})"
-                        : $"(sbyte){v.ToString(CultureInfo.InvariantCulture)}";
-                }
-                case "short": {
-                    short v = Convert.ToInt16(defaultValue, CultureInfo.InvariantCulture);
-                    return v < 0
-                        ? $"(short)({v.ToString(CultureInfo.InvariantCulture)})"
-                        : $"(short){v.ToString(CultureInfo.InvariantCulture)}";
-                }
-                case "ushort":
-                    return $"(ushort){Convert.ToUInt16(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
-                case "int":
-                    return Convert.ToInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
-                case "uint":
-                    return Convert.ToUInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "u";
-                case "long":
-                    return Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "L";
-                case "ulong":
-                    return Convert.ToUInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "UL";
-                case "float": {
-                    float v = Convert.ToSingle(defaultValue, CultureInfo.InvariantCulture);
-                    if (float.IsNaN(v))
-                        return "float.NaN";
-                    if (float.IsPositiveInfinity(v))
-                        return "float.PositiveInfinity";
-                    if (float.IsNegativeInfinity(v))
-                        return "float.NegativeInfinity";
-                    return v.ToString("R", CultureInfo.InvariantCulture) + "f";
-                }
-                case "double": {
-                    double v = Convert.ToDouble(defaultValue, CultureInfo.InvariantCulture);
-                    if (double.IsNaN(v))
-                        return "double.NaN";
-                    if (double.IsPositiveInfinity(v))
-                        return "double.PositiveInfinity";
-                    if (double.IsNegativeInfinity(v))
-                        return "double.NegativeInfinity";
-                    return v.ToString("R", CultureInfo.InvariantCulture) + "d";
-                }
-                case "decimal":
-                    return Convert.ToDecimal(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "m";
-                default:
-                    return "null";
+        switch (primitiveType) {
+            case "bool":
+                return Convert.ToBoolean(defaultValue, CultureInfo.InvariantCulture) ? "true" : "false";
+            case "byte":
+                return $"(byte){Convert.ToByte(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
+            case "sbyte": {
+                sbyte v = Convert.ToSByte(defaultValue, CultureInfo.InvariantCulture);
+                return v < 0
+                    ? $"(sbyte)({v.ToString(CultureInfo.InvariantCulture)})"
+                    : $"(sbyte){v.ToString(CultureInfo.InvariantCulture)}";
             }
-        }
-        catch {
-            return "null";
+            case "short": {
+                short v = Convert.ToInt16(defaultValue, CultureInfo.InvariantCulture);
+                return v < 0
+                    ? $"(short)({v.ToString(CultureInfo.InvariantCulture)})"
+                    : $"(short){v.ToString(CultureInfo.InvariantCulture)}";
+            }
+            case "ushort":
+                return $"(ushort){Convert.ToUInt16(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)}";
+            case "int":
+                return Convert.ToInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
+            case "uint":
+                return Convert.ToUInt32(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "u";
+            case "long":
+                return Convert.ToInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "L";
+            case "ulong":
+                return Convert.ToUInt64(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "UL";
+            case "float": {
+                float v = Convert.ToSingle(defaultValue, CultureInfo.InvariantCulture);
+                if (float.IsNaN(v))
+                    return "float.NaN";
+                if (float.IsPositiveInfinity(v))
+                    return "float.PositiveInfinity";
+                if (float.IsNegativeInfinity(v))
+                    return "float.NegativeInfinity";
+                return v.ToString("R", CultureInfo.InvariantCulture) + "f";
+            }
+            case "double": {
+                double v = Convert.ToDouble(defaultValue, CultureInfo.InvariantCulture);
+                if (double.IsNaN(v))
+                    return "double.NaN";
+                if (double.IsPositiveInfinity(v))
+                    return "double.PositiveInfinity";
+                if (double.IsNegativeInfinity(v))
+                    return "double.NegativeInfinity";
+                return v.ToString("R", CultureInfo.InvariantCulture) + "d";
+            }
+            case "decimal":
+                return Convert.ToDecimal(defaultValue, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture) + "m";
+            default:
+                throw new NotSupportedException($"Unsupported primitive type: {primitiveType}.");
         }
     }
 
