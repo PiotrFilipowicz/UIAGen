@@ -1,10 +1,18 @@
-# UIA: .NET 10 COM automation adapters
+# UIA: .NET COM automation adapters
 
+[![.NET 11](https://img.shields.io/badge/.NET-11.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET Standard 2](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
+[![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
+[![GitHub Release](https://img.shields.io/github/v/release/PiotrFilipowicz/UIAGen?style=flat-square&logo=github)](https://github.com/PiotrFilipowicz/UIAGen/releases)
 
-`UIAGen` reads Windows COM type libraries (TLBs) and generates typed C# adapters for .NET 10, including adapters for Microsoft Office, Adobe Creative Cloud, and Autodesk AutoCAD applications. You write ordinary C# against generated classes, get IntelliSense and compile-time checks, and can inspect the same typed object model in Visual Studio. The generated runtime uses native COM Automation calls without requiring a Primary Interop Assembly (PIA) or the C# `dynamic` binder.
+`UIAGen` reads Windows COM type libraries (TLBs) and generates typed C# adapters for .NET 8/9//10/11 and .NET Standard 2.0, including adapters for Microsoft Office, Adobe Creative Cloud, and Autodesk AutoCAD applications. You write ordinary C# against generated classes, get IntelliSense and compile-time checks, and can inspect the same typed object model in Visual Studio. The generated runtime uses native COM Automation calls without requiring a Primary Interop Assembly (PIA) or the C# `dynamic` binder.
 
 ## Static types and IntelliSense
 
@@ -93,6 +101,18 @@ The generated factories reference wrapper constructors directly. Paths that use 
 `ComPointerLease` and `ComStub` track ownership of native references. Generated `Application.Create(progId)` initializes the application's `ComBehavior` and its `Tracker`; related wrappers can share that behavior. `Tracker.MoveCheckPoint` disposes wrappers registered after the checkpoint in reverse order. Generated `Application.Quit` methods that clear the tracker do so before invoking COM. `Dispose` releases a wrapper's reference; it does not shut down the application. Use the server's `Quit` or `Close` method when you own the application or document.
 
 `ComInvoker` uses stack storage for `VARIANT` argument slots (up to 256 arguments) and the result. BSTRs, SAFEARRAYs, and managed conversions can still allocate. The runtime explicitly encodes and decodes supported `VARIANT` types and clears temporary variants; this gives it control over native ownership and over the behavior of values such as `VT_EMPTY` and `VT_NULL`.
+
+#### Why VBA's Ref-Counting Works and How UIA Eliminates PIA "Reference Hell"
+
+COM object models across Microsoft Office, Adobe Creative Cloud, and AutoCAD were architected for **VBA / VB6 / C++**, where reference counting (`AddRef` / `Release`) is deterministic and scope-bound. When VBA evaluates an expression such as `rs.Fields("Label").Value` or `app.DBEngine.Workspaces(0)`, every temporary COM pointer is released immediately when the expression or loop scope completes. That deterministic lifecycle—not VBA's syntax—is the primary reason VBA scripts remain reliable and leak-free in production.
+
+In legacy Primary Interop Assemblies (PIAs), deterministic scope cleanup is replaced by the .NET Garbage Collector. Because an RCW occupies only a few dozen bytes on the managed heap, the GC sees no memory pressure and defers finalization indefinitely, while an entire out-of-process COM server (`MSACCESS.EXE`, `EXCEL.EXE`, `WINWORD.EXE`) waits with a non-zero COM reference count. Under the infamous **two-dots rule**, even developers who diligently call `Marshal.FinalReleaseComObject` on every named variable (`field`, `rs`, `ws`, `db`, `app`) still silently leak `app.DBEngine`, `Workspaces`, and `rs.Fields` on every iteration—leaving **1,000+ unreferenced RCWs** in a 1,000-row loop. Because automation instances start with `UserControl = false`, `Quit()` closes the document flow while `MSACCESS.EXE` stays stuck in Task Manager as an unclosable zombie window holding `.accdb` / `.laccdb` file locks until the client process exits or executes double `GC.Collect()` + `GC.WaitForPendingFinalizers()` barriers.
+
+UIA restores VBA's deterministic COM lifecycle semantics in statically typed C# and Native AOT:
+
+- **Automatic LIFO registration:** Every wrapper returned from a property, method, or indexer inherits the parent's `ComBehavior` and pushes itself onto the `Tracker` stack in creation order.
+- **Reverse-order teardown on `Quit()`:** Clearing the `Tracker` releases dependent child wrappers (`Field`, `Fields`, `Recordset`, `Workspace`, `Workspaces`, `DBEngine`, `Database`) in strict LIFO order before `Quit` is invoked on the application, allowing `MSACCESS.EXE` to reach zero external references and exit cleanly.
+- **Scoped checkpoints inside loops (VBA-style frame cleanup):** When executing thousands or hundreds of thousands of operations before `Quit()`, calling `int cp = tracker.GetCheckPoint()` before a loop iteration (or batch) and `tracker.MoveCheckPoint(cp)` afterward acts just like a VBA local stack frame—reclaiming temporary intermediate COM pointers deterministically with `O(1)` active handle count instead of accumulating them until `Quit()`.
 
 ### Distinguish missing objects from failed calls
 
@@ -219,6 +239,42 @@ try {
 finally {
     app.Quit(WdSaveOptions.wdDoNotSaveChanges);
 }
+```
+
+### Microsoft Access & DAO transaction automation (LIFO cleanup & loop checkpoints vs. PIA)
+
+This pattern illustrates why PIA fails on chained DAO expressions while UIA restores VBA-like ergonomics and deterministic shutdown. In PIA, `app.DBEngine.Workspaces[0]` leaks two intermediate RCWs (`DBEngine` and `Workspaces`) and `rs.Fields["Label"]` leaks 1,000 `Fields` RCWs inside the loop—keeping `MSACCESS.EXE` alive as an unclosable zombie window even when `Marshal.FinalReleaseComObject` is called on `field`, `rs`, `ws`, `db`, and `app`.
+
+In UIA, chained member access remains clean, `GetCheckPoint()` / `MoveCheckPoint(cp)` keeps temporary loop wrappers bounded at `O(1)` regardless of row count (1,000 or 100,000+), and `Quit()` deterministically releases the remaining tracked references in LIFO order before shutting down `MSACCESS.EXE`:
+
+```csharp
+using MSOfficeAdapter.Access;
+using MSOfficeAdapter.DAO;
+
+using var app = Application.Create("Access.Application");
+app.Visible = false;
+app.OpenCurrentDatabase(dbPath);
+
+Database db = app.CurrentDb();
+Workspace ws = app.DBEngine.Workspaces[0];
+
+ws.BeginTrans();
+Recordset rs = db.OpenRecordset("BenchItems");
+
+var tracker = app.ComBehavior!.Tracker;
+for (int i = 0; i < 1000; i++)
+{
+    int cp = tracker.GetCheckPoint();
+    rs.AddNew();
+    rs.Fields["Label"].Value = $"Row {i}";
+    rs.Update();
+    tracker.MoveCheckPoint(cp); // Acts like a VBA loop scope: releases temporary Fields/Field pointers each iteration.
+}
+
+ws.CommitTrans();
+rs.Close();
+app.CloseCurrentDatabase();
+app.Quit(); // Releases remaining tracked COM wrappers (ws, Workspaces, DBEngine, rs, db) in LIFO order before COM Quit.
 ```
 
 ## Building and generating adapters

@@ -1,6 +1,11 @@
 ![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.png)
 
+[![.NET 11](https://img.shields.io/badge/.NET-11.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET Standard 2](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
 [![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
@@ -9,7 +14,7 @@
 
 # Universal Interop Assembly (UIA) Code Generator
 
-**Build-time code generator (`UIAGen.exe`)** turns any Windows COM Type Library into a clean, statically typed, **Native AOT-compatible C# adapter** for .NET 10 and .NET Standard 2.0 (including .NET Framework 4.8).
+**Build-time code generator (`UIAGen.exe`)** turns any Windows COM Type Library into a clean, statically typed, **Native AOT-compatible C# adapter** for .NET 8/9/10/11 and .NET Standard 2.0 (including .NET Framework 4.8).
 
 Say goodbye to Primary Interop Assemblies (PIA), GAC deployment nightmares, and the slow C# `dynamic` binder.
 
@@ -40,7 +45,7 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 ## Why is UIA unique?
 
 * **True Native AOT & Trimming Support:** Unlike legacy RCW/CCW interop, UIA generates static C# wrappers that call native COM vtables directly—compiling cleanly into standalone Native AOT executables.
-* **Works on `.NET Framework 4.8` Too:** Generated adapter projects multi-target `net10.0;netstandard2.0`, and the test suite passes under `net48` as well—making UIA a drop-in, PIA-free upgrade path even if you cannot migrate off .NET Framework 4.8 yet.
+* **Works on `.NET Framework 4.8` Too:** Generated adapter projects multi-target `net8.0;netstandard2.0`, and the test suite passes under `net48` as well—making UIA a drop-in, PIA-free upgrade path even if you cannot migrate off .NET Framework 4.8 yet.
 * **Zero PIA & Zero `dynamic`:** Ship your application without hunting for version-specific Primary Interop Assemblies or sacrificing performance and type safety to `dynamic`.
 * **Proven Compilation Across 500+ COM Servers:** Tested at scale against more than 500 registered Windows system COM libraries, as well as massive, real-world object models like Microsoft Office, Adobe InDesign, and Autodesk AutoCAD.
 * **Smart Static Typing:** Infers strongly typed collection elements (`Stories` → `Story`), provides runtime polymorphic casting (`As<T>()`), and cleanly separates missing COM objects from failed `HRESULT`s.
@@ -48,12 +53,109 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 
 ---
 
+## Why VBA Still Survives—and How UIA Ends "PIA Reference Hell"
+
+People often ask why 30-year-old **VBA** remains so entrenched in Office, Access, and AutoCAD automation—even among experienced C# teams. Technologically, VBA and modern .NET sit on opposite ends of the spectrum:
+
+| Dimension | VBA (1990s Scripting) | Legacy PIA (.NET Interop) | **UIA (.NET 10 + Native AOT)** |
+| :--- | :--- | :--- | :--- |
+| **Runtime & Compilation** | Interpreted / p-code scripting inside host documents | JIT-only managed code (breaks Native AOT & trimming) | **Statically compiled C#, full Native AOT support** |
+| **Type System** | Dynamic / `Variant`-heavy, weak compile-time guarantees | Static types (on brittle, version-locked PIAs) | **Static C# types, zero PIA, zero `dynamic`** |
+| **Tooling & Engineering** | Legacy VBE editor only—no Visual Studio, no refactoring, no Roslyn, no CI/CD or NuGet | Visual Studio IDE & modern tooling | **Full Visual Studio IDE, IntelliSense, debugger views, Roslyn, Git, CI/CD, NuGet** |
+| **COM Lifetime & Cleanup** | ✅ Deterministic scope-based ref-counting | ❌ GC-bound RCWs ("two-dots rule" leaks & zombies) | ✅ **Deterministic LIFO `Tracker` + loop checkpoints** |
+
+Developers do **not** stay on VBA because they enjoy writing dynamic, untyped scripts trapped inside an embedded 1990s macro editor without Visual Studio, refactoring, automated testing, or native compilation. They stay on VBA for **one reason**: COM object models were designed around VBA's deterministic reference counting. In VBA, expressions like `app.DBEngine.Workspaces(0)` and `rs.Fields("Label").Value` release every temporary COM pointer **the instant** the expression or loop scope ends.
+
+When .NET introduced Primary Interop Assemblies (PIAs), it gave developers Visual Studio and static types—but broke COM lifetime management by replacing deterministic teardown with a Garbage Collector that only sees a ~32-byte Runtime Callable Wrapper (RCW) on the managed heap, completely blind to the entire `MSACCESS.EXE` or `EXCEL.EXE` process locked on the other side. Under PIA's infamous **two-dots rule**, natural C# chaining silently leaks hidden RCWs that keep out-of-process COM servers alive as unclosable zombie windows holding `.accdb` / `.laccdb` file locks.
+
+Compare all three worlds on a real **1,000-row Access DAO transaction**:
+
+```vb
+' 🟡 VBA: Deterministic COM cleanup, but trapped in a dynamic 1990s scripting runtime
+'    without Visual Studio, static type guarantees, modern libraries, or Native AOT.
+Set ws = app.DBEngine.Workspaces(0)
+ws.BeginTrans
+Set rs = db.OpenRecordset("BenchItems")
+For i = 0 To 999
+    rs.AddNew
+    rs.Fields("Label").Value = "Row " & i
+    rs.Update
+Next i
+ws.CommitTrans
+```
+
+```csharp
+// ❌ PIA (.NET): Gives you Visual Studio, but breaks Native AOT and turns COM cleanup into a nightmare.
+//    Even with 5 explicit Marshal.FinalReleaseComObject calls, MSACCESS.EXE STILL hangs!
+var accessType = Type.GetTypeFromProgID("Access.Application", throwOnError: true);
+var app = (Access.Application)Activator.CreateInstance(accessType);
+app.OpenCurrentDatabase(_dbPath);
+var db = app.CurrentDb();
+var ws = app.DBEngine.Workspaces[0]; // ⚠️ Leaks 2 hidden RCWs: DBEngine + Workspaces!
+
+ws.BeginTrans();
+var rs = db.OpenRecordset("BenchItems");
+for (int i = 0; i < 1000; i++)
+{
+    rs.AddNew();
+    var field = rs.Fields["Label"];  // ⚠️ Leaks 1,000 hidden RCWs for rs.Fields!
+    field.Value = $"Row {i}";
+    Marshal.FinalReleaseComObject(field);
+    rs.Update();
+}
+rs.Close();
+Marshal.FinalReleaseComObject(rs);
+ws.CommitTrans();
+Marshal.FinalReleaseComObject(ws);
+
+app.CloseCurrentDatabase();
+Marshal.FinalReleaseComObject(db);
+app.Quit(Access.AcQuitOption.acQuitSaveNone);
+Marshal.FinalReleaseComObject(app);
+// Result: 1,002 leaked intermediate RCWs keep MSACCESS.EXE alive, unclosable by hand,
+// and locking the database until your process exits or runs GC.Collect() + WaitForPendingFinalizers().
+```
+
+To survive this in PIA, you must abandon readable C# and hoist **every single property dot** (`dbEngine`, `workspaces`, `fields`) into separate variables inside nested `try/finally` blocks. **UIA bridges the technological divide completely—giving you a modern, statically typed, Native AOT-compilable C# codebase in Visual Studio *with* VBA-grade deterministic COM cleanup:**
+
+```csharp
+// ✅ UIA (.NET 10 / Native AOT): Full Visual Studio IntelliSense, static types, Native AOT,
+//    VBA-grade chaining, and deterministic LIFO cleanup — zero zombies.
+using var app = Adapter.Office.Access.Application.Create("Access.Application");
+app.Visible = false;
+app.OpenCurrentDatabase(_dbPath);
+var db = app.CurrentDb();
+var ws = app.DBEngine.Workspaces[0];
+
+ws.BeginTrans();
+var rs = db.OpenRecordset("BenchItems");
+
+var tracker = app.ComBehavior!.Tracker;
+for (int i = 0; i < 1000; i++)
+{
+    int cp = tracker.GetCheckPoint();
+    rs.AddNew();
+    rs.Fields["Label"].Value = $"Row {i}";
+    rs.Update();
+    tracker.MoveCheckPoint(cp); // Optional in small loops: frees temporary Fields/Field handles per iteration (O(1) even at 100,000+ rows).
+}
+ws.CommitTrans();
+
+rs.Close();
+app.CloseCurrentDatabase();
+app.Quit(); // Releases remaining tracked COM wrappers (ws, Workspaces, DBEngine, rs, db) in LIFO order before COM Quit.
+```
+
+Even without checkpoints, `app.Quit()` clears the LIFO `Tracker` so `MSACCESS.EXE` shuts down cleanly with zero locked files. Adding `GetCheckPoint()` / `MoveCheckPoint(cp)` mirrors a VBA loop scope directly—keeping active COM handles constant (`O(1)`) whether you insert 1,000 or 100,000 rows, inside a true compiled, statically typed .NET 10 / Native AOT application. See **[LIFO Reference Tracking in ARCHITECTURE.md](ARCHITECTURE.md#own-native-references-and-marshal-values-explicitly)** for details.
+
+---
+
 ## .NET Framework 4.8 (`net48`) Support
 
 If your application cannot yet migrate away from **.NET Framework 4.8 (`net48`)**, you can still use generated UIA adapters without PIAs or GAC dependencies:
 
-* **Multi-targeted output (`net10.0;netstandard2.0`):** Every generated adapter project targets both `net10.0` and `netstandard2.0`, and the test suite passes on `net48`. Your `net48` application can reference the `netstandard2.0` adapter build directly (or compile the generated sources with `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`).
-* **Single-assembly merging & trimming with `ILMerge`:** On `net48`, you can merge and trim/internalize the generated adapter assembly into your application binary using **ILMerge**, keeping deployment self-contained and ready for a smooth future migration to .NET 10 and Native AOT.
+* **Multi-targeted output (`net8.0;netstandard2.0`):** Every generated adapter project targets both `net8.0` and `netstandard2.0`, and the test suite passes on `net48`. Your `net48` application can reference the `netstandard2.0` adapter build directly (or compile the generated sources with `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`).
+* **Single-assembly merging & trimming with `ILMerge`:** On `net48`, you can merge and trim/internalize the generated adapter assembly into your application binary using **ILMerge**, keeping deployment self-contained and ready for a smooth future migration to .NET 8 and Native AOT.
 
 ---
 

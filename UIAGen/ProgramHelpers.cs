@@ -526,7 +526,7 @@ internal static class ProgramHelpers {
             return false;
         }
 
-        string builtDllPath = Path.Combine(projectDir, "bin", "Release", "net10.0", $"{assemblyName}.dll");
+        string builtDllPath = Path.Combine(projectDir, "bin", "Release", "net8.0", $"{assemblyName}.dll");
         if (!File.Exists(builtDllPath)) {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"Compiled assembly not found at expected path: '{builtDllPath}'.");
@@ -642,22 +642,25 @@ internal static class ProgramHelpers {
         string project = """
             <Project Sdk="Microsoft.NET.Sdk">
             	<PropertyGroup>
-            		<TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>
+            		<TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
             		<ImplicitUsings>enable</ImplicitUsings>
             		<PlatformTarget>x64</PlatformTarget>
             		<Platforms>x64</Platforms>
             		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-            		<LangVersion>latest</LangVersion>
-            	</PropertyGroup>
-            	<PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
             		<Nullable>enable</Nullable>
+               		<LangVersion>latest</LangVersion>
             		<EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+            		<DebugType>full</DebugType>
+                </PropertyGroup>
+            	<PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
             		<IsAotCompatible>true</IsAotCompatible>
             		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
             		<EnableAotAnalyzer>true</EnableAotAnalyzer>
-            		<DebugType>full</DebugType>
             	</PropertyGroup>
-            </Project>
+ 	            <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+		            <PackageReference Include="System.Reflection.Metadata" Version="8.0.0" />
+	            </ItemGroup>
+           </Project>
                                     
             """;
         string projectFilePath = Path.Combine(outputDirectory, projectName);
