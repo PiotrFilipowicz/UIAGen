@@ -100,6 +100,11 @@ public partial class UiaAdapterWrapper {
     internal StringBuilder CreateSectionBuilder(string sectionName) =>
         CreateSectionBuilder(sectionName, AdapterClassName, RootNamespace);
 
+//#pragma warning disable CS8669 // The annotation for nullable reference types should only be used in code within a '#nullable' annotations context
+//#pragma warning disable CS8604 // Possible null reference
+//#pragma warning disable CS8602 // Dereference of a possibly null reference.
+//#pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
+
     internal static StringBuilder CreateSectionBuilder(string sectionName, string targetNamespace, string rootNamespace) {
         string sharedUsing = !string.Equals(targetNamespace, rootNamespace, StringComparison.Ordinal)
             ? $"using {rootNamespace};{Environment.NewLine}"
@@ -110,14 +115,10 @@ public partial class UiaAdapterWrapper {
 //   Complete UiaAdapter object model generated for .NET 10
 // </auto-generated>
 
+//  Section: {{sectionName}}
+
 #pragma warning disable CS0109 // Member does not hide an accessible member
 #pragma warning disable CS0108 // Member hides inherited member. Use the new keyword if hiding was intended.
-#pragma warning disable CS8669 // The annotation for nullable reference types should only be used in code within a '#nullable' annotations context
-#pragma warning disable CS8604 // Possible null reference
-#pragma warning disable CS8602 // Dereference of a possibly null reference.
-#pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
-
-//  Section: {{sectionName}}
 
 using System;
 using System.Collections;

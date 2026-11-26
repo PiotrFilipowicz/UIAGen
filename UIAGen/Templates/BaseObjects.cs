@@ -9,8 +9,8 @@
 //     project are cryptographically signed.
 // </security>
 //------------------------------------------------------------------------------
-
 #if UIA_ADAPTER_TEMPLATE
+#nullable disable
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -20,7 +20,6 @@ using System.Runtime.InteropServices;
 using UiaAdapter.ComRuntime;
 
 namespace UiaAdapter.TemplateSyntax {
-#pragma warning disable CS0109, CS8602, CS8625, CS8765, CS8601, CS8618, CS8600, CS8603, CS8604
 #endif
 
     // =========================================================================
@@ -314,7 +313,7 @@ namespace UiaAdapter.TemplateSyntax {
         }
 
         public ComProxy Item(object row, object column) {
-            return InheritTracker(ComObjectExtensions.ToComProxy(ComInvoker.InvokeMethod(this, "Item", ComBehavior.InvocationMode, ForceLateInvoke, -1, TypeCacheKey, new object[] { row, column })));
+            return InheritTracker(ComObjectExtensions.ToComProxy(ComInvoker.DirectInvoke(this, "Item", ComBehavior.InvocationMode, ForceLateInvoke, -1, TypeCacheKey, row, column)));
         }
 
         public object GetProperty(string propertyName) {
@@ -504,7 +503,7 @@ namespace UiaAdapter.TemplateSyntax {
 
         // __UIA_TYPED_COLLECTION_MEMBERS_BEGIN__
         [global::System.Runtime.CompilerServices.IndexerName("Indexer")]
-        public new TItem this[object index] {
+        public TItem this[object index] {
             get {
                 var raw = ComInvoker.GetIndexer(this, index, ComBehavior.InvocationMode, ForceLateInvoke, TypeCacheKey);
                 if (typeof(TItem) == typeof(string)) {
@@ -524,9 +523,9 @@ namespace UiaAdapter.TemplateSyntax {
         public new TItem this[string name] => this[(object)name];
 
         [global::System.Runtime.CompilerServices.IndexerName("Indexer")]
-        public new TItem this[object row, object column] {
+        public TItem this[object row, object column] {
             get {
-                var raw = ComInvoker.InvokeMethod(this, "Item", ComBehavior.InvocationMode, ForceLateInvoke, 0, TypeCacheKey, new object[] { row, column });
+                var raw = ComInvoker.DirectInvoke(this, "Item", ComBehavior.InvocationMode, ForceLateInvoke, 0, TypeCacheKey, row, column);
                 if (typeof(TItem) == typeof(string)) {
                     return (TItem)(object)(raw?.ToString() ?? string.Empty);
                 }
@@ -580,11 +579,15 @@ namespace UiaAdapter.TemplateSyntax {
                         TItem item = default(TItem);
                         if (typeof(TItem) == typeof(string)) {
                             item = (TItem)(object)(rawItem?.ToString() ?? string.Empty);
+                            if (rawItem is IDisposable rawDisposable)
+                                rawDisposable.Dispose();
                         }
                         else if (rawItem != null) {
                             item = ComObjectExtensions.As<TItem>(rawItem);
                             InheritTracker(item);
                             if (ForceLateInvoke && item is ComProxy asComProxy) { asComProxy.ForceLateInvoke = true; }
+                            if (rawItem is ComProxy rawProxy && !ReferenceEquals(rawProxy, item) && rawProxy.ComBehavior == null)
+                                rawProxy.Dispose();
                         }
 
                         if (item != null) {
@@ -1099,15 +1102,15 @@ namespace UiaAdapter.TemplateSyntax {
 
     internal sealed class ComCollectionEnumCursor {
         private readonly ComProxies _collection;
-        private readonly bool _forceLateInvoke;
+        private readonly bool _forceLateInvoke = false;
         private readonly global::System.Collections.Generic.Dictionary<int, (object Item, string Invoking)> _cachedItems =
             new global::System.Collections.Generic.Dictionary<int, (object Item, string Invoking)>();
-        private ComPointerLease _enumLease;
+        private ComPointerLease _enumLease = default;
         private string _invoking = ComInvoker.InvocationContext.Unknown;
         private int _nextIndex = 1;
-        private bool _initialized;
-        private bool _enumUnsupported;
-        private bool _completed;
+        private bool _initialized = false;
+        private bool _enumUnsupported = false;
+        private bool _completed = false;
 
         public ComCollectionEnumCursor(ComProxies collection, bool forceLateInvoke) {
             _collection = collection;
@@ -1610,51 +1613,48 @@ namespace UiaAdapter.TemplateSyntax {
     }
 
     public static class ComObjectExtensions {
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetDocumentationDelegate(IntPtr pTypeInfo, int memid, IntPtr* pBstrName, IntPtr* pBstrDocString, uint* pdwHelpContext, IntPtr* pBstrHelpFile);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetContainingTypeLibDelegate(IntPtr pTypeInfo, IntPtr* ppTLib, uint* pIndex);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private unsafe delegate int GetLibAttrDelegate(IntPtr pTypeLib, IntPtr* ppTLibAttr);
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate void ReleaseLibAttrDelegate(IntPtr pTypeLib, IntPtr pTLibAttr);
-
         public static unsafe bool TryGetComTypeIdentity(object value, out Guid typeLibGuid, out string typeName) {
             typeLibGuid = Guid.Empty;
             typeName = string.Empty;
             if (value == null)
                 return false;
 
-            IntPtr pDispatch = IntPtr.Zero;
-            bool releaseDispatch = false;
+            if (value is IComWrapper wrapper)
+                return TryGetComTypeIdentityCore(wrapper.ComPointer, releaseDispatch: false, out typeLibGuid, out typeName);
 
-            if (value is IComWrapper wrapper) {
-                pDispatch = wrapper.ComPointer;
-            }
-            else if (value is IntPtr pointer && pointer != IntPtr.Zero) {
-                if (ComStubOps.QueryInterface(pointer, in ComStubOps.IID_IDispatch, out pDispatch) < 0)
-                    return false;
-                releaseDispatch = true;
-            }
-            else {
+            if (value is IntPtr pointer)
+                return TryGetComTypeIdentity(pointer, out typeLibGuid, out typeName);
+
+            return false;
+        }
+
+        internal static unsafe bool TryGetComTypeIdentity(IntPtr pointer, out Guid typeLibGuid, out string typeName) {
+            typeLibGuid = Guid.Empty;
+            typeName = string.Empty;
+            if (pointer == IntPtr.Zero)
                 return false;
-            }
 
+            if (ComStubOps.QueryInterface(pointer, in ComStubOps.IID_IDispatch, out IntPtr pDispatch) < 0)
+                return false;
+
+            return TryGetComTypeIdentityCore(pDispatch, releaseDispatch: true, out typeLibGuid, out typeName);
+        }
+
+        private static unsafe bool TryGetComTypeIdentityCore(IntPtr pDispatch, bool releaseDispatch, out Guid typeLibGuid, out string typeName) {
+            typeLibGuid = Guid.Empty;
+            typeName = string.Empty;
             if (pDispatch == IntPtr.Zero)
                 return false;
 
             try {
                 if (ComStubOps.TryGetVTableFunction(pDispatch, 4, out IntPtr getTypeInfoFunction)) {
-                    var getTypeInfo = Marshal.GetDelegateForFunctionPointer<ComInvoker.GetTypeInfoDelegate>(getTypeInfoFunction);
+                    var getTypeInfo = (delegate* unmanaged[Stdcall]<IntPtr, uint, uint, IntPtr*, int>)getTypeInfoFunction;
                     IntPtr pTypeInfo = IntPtr.Zero;
 
                     if (getTypeInfo(pDispatch, 0, 0, &pTypeInfo) == 0 && pTypeInfo != IntPtr.Zero) {
                         try {
                             if (ComStubOps.TryGetVTableFunction(pTypeInfo, 12, out IntPtr getDocumentationFunction)) {
-                                var getDocumentation = Marshal.GetDelegateForFunctionPointer<GetDocumentationDelegate>(getDocumentationFunction);
+                                var getDocumentation = (delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr*, IntPtr*, uint*, IntPtr*, int>)getDocumentationFunction;
                                 IntPtr bstrName = IntPtr.Zero;
                                 if (getDocumentation(pTypeInfo, -1, &bstrName, null, null, null) == 0 && bstrName != IntPtr.Zero) {
                                     try {
@@ -1671,13 +1671,13 @@ namespace UiaAdapter.TemplateSyntax {
 
                             if (!string.IsNullOrEmpty(typeName) &&
                                 ComStubOps.TryGetVTableFunction(pTypeInfo, 18, out IntPtr getContainingTypeLibFunction)) {
-                                var getContainingTypeLib = Marshal.GetDelegateForFunctionPointer<GetContainingTypeLibDelegate>(getContainingTypeLibFunction);
+                                var getContainingTypeLib = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, uint*, int>)getContainingTypeLibFunction;
                                 IntPtr pTypeLib = IntPtr.Zero;
                                 uint typeIndex = 0;
                                 if (getContainingTypeLib(pTypeInfo, &pTypeLib, &typeIndex) == 0 && pTypeLib != IntPtr.Zero) {
                                     try {
                                         if (ComStubOps.TryGetVTableFunction(pTypeLib, 7, out IntPtr getLibAttrFunction)) {
-                                            var getLibAttr = Marshal.GetDelegateForFunctionPointer<GetLibAttrDelegate>(getLibAttrFunction);
+                                            var getLibAttr = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)getLibAttrFunction;
                                             IntPtr pLibAttr = IntPtr.Zero;
                                             if (getLibAttr(pTypeLib, &pLibAttr) == 0 && pLibAttr != IntPtr.Zero) {
                                                 try {
@@ -1685,7 +1685,7 @@ namespace UiaAdapter.TemplateSyntax {
                                                 }
                                                 finally {
                                                     if (ComStubOps.TryGetVTableFunction(pTypeLib, 12, out IntPtr releaseLibAttrFunction)) {
-                                                        var releaseLibAttr = Marshal.GetDelegateForFunctionPointer<ReleaseLibAttrDelegate>(releaseLibAttrFunction);
+                                                        var releaseLibAttr = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, void>)releaseLibAttrFunction;
                                                         releaseLibAttr(pTypeLib, pLibAttr);
                                                     }
                                                 }
@@ -1930,11 +1930,29 @@ namespace UiaAdapter.TemplateSyntax {
         private static readonly Dictionary<string, Func<object, ComProxy>> _typeRegistry =
             new Dictionary<string, Func<object, ComProxy>>(StringComparer.OrdinalIgnoreCase);
 
+        public static ComProxy Resolve(IntPtr comPointer) {
+            if (comPointer == IntPtr.Zero)
+                return ComProxy.Missing();
+
+            if (ComObjectExtensions.TryGetComTypeIdentity(comPointer, out Guid typeLibGuid, out string comTypeName)) {
+                if (typeLibGuid != Guid.Empty && _scopedTypeRegistry.TryGetValue((typeLibGuid, comTypeName), out var scopedCreator)) {
+                    return scopedCreator(comPointer);
+                }
+                if (!string.IsNullOrEmpty(comTypeName) && _typeRegistry.TryGetValue(comTypeName, out var creator)) {
+                    return creator(comPointer);
+                }
+            }
+
+            return new ComProxy(comPointer);
+        }
+
         public static ComProxy Resolve(object rawCom) {
             if (rawCom == null)
                 return ComProxy.Missing();
             if (rawCom is ComProxy proxy)
                 return proxy;
+            if (rawCom is IntPtr ptr)
+                return Resolve(ptr);
             object target = rawCom;
             if (!ComStubOps.IsComObject(target))
                 return new ComProxy(target);

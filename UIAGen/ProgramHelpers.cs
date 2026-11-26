@@ -586,7 +586,6 @@ internal static class ProgramHelpers {
 // </security>
 //------------------------------------------------------------------------------
 
-
 """;
 
     }
@@ -606,6 +605,10 @@ internal static class ProgramHelpers {
     private static void WriteGeneratedStream(StreamReader reader, string generatedName, string Header, string? eol) {
         using TextWriter writer = File.CreateText(generatedName);
         writer.Write(Header);
+        if (Path.GetFileName(generatedName).StartsWith("Generated.UIA.")) {
+            writer.WriteLine();
+            writer.WriteLine("#nullable disable");
+        }
         string? line;
         bool remarksRead = false;
         bool blockStart = false;
@@ -657,10 +660,10 @@ internal static class ProgramHelpers {
             		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
             		<EnableAotAnalyzer>true</EnableAotAnalyzer>
             	</PropertyGroup>
- 	            <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
-		            <PackageReference Include="System.Reflection.Metadata" Version="8.0.0" />
-	            </ItemGroup>
-           </Project>
+                <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+                    <PackageReference Include="System.Reflection.Metadata" Version="8.0.0" />
+                </ItemGroup>
+            </Project>
                                     
             """;
         string projectFilePath = Path.Combine(outputDirectory, projectName);

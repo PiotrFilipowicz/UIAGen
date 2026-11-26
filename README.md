@@ -32,7 +32,7 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 
 | Feature | Legacy `tlbimp.exe` / PIA | C# `dynamic` | Manual `ComWrappers` | **UIAGen** |
 | :--- | :---: | :---: | :---: | :---: |
-| **.NET 8 / 9 / 10 Support** | ⚠️ Limited (No `tlbimp`) | ✅ Yes | ✅ Yes | ✅ **Native** |
+| **.NET 8/9/10/11 Support** | ⚠️ Limited (No `tlbimp`) | ✅ Yes | ✅ Yes | ✅ **Native** |
 | **.NET Framework 4.8 (`net48`) Support** | ✅ Yes (with PIA/GAC) | ✅ Yes | ❌ No | ✅ **Yes (`netstandard2.0`, zero PIA)** |
 | **Native AOT & Trimming** | ❌ Broken | ❌ Broken | ✅ Yes | ✅ **100% Compatible** |
 | **Zero Manual Boilerplate** | ✅ Auto-generated | ✅ No wrappers | ❌ Painful to write | ✅ **1-Command CLI** |
