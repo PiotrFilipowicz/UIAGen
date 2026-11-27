@@ -21,6 +21,35 @@ using System.Text;
 namespace UiaAdapter;
 
 public partial class UiaAdapterWrapper {
+    private static readonly HashSet<string> ComProxyPropertyNames = new(StringComparer.Ordinal) {
+        "Value",
+        "IsMissing"
+    };
+
+    private static readonly HashSet<string> ComProxyMethodNames = new(StringComparer.Ordinal) {
+        "Item",
+        "GetProperty",
+        "SetProperty"
+    };
+
+    private static readonly HashSet<string> ComProxyMethodSignatures = new(StringComparer.Ordinal) {
+        "Item(object)",
+        "Item(object, object)",
+        "GetProperty(string)",
+        "SetProperty(string, object)"
+    };
+
+    private string? _cachedAdobeObjectsMembersSource;
+    private AdobeObjectsMemberSignatures? _cachedAdobeObjectsSignatures;
+    private readonly HashSet<string> _emittedAdobeObjectsPropertyNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedAdobeObjectsMethodNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _emittedAdobeObjectsMethodSignatures = new(StringComparer.Ordinal);
+    private bool _hasEmittedAdobeObjectsMembers;
+
+    private sealed record AdobeObjectsMemberSignatures(
+        HashSet<string> PropertyNames,
+        HashSet<string> MethodNames,
+        HashSet<string> MethodSignatures);
 
     internal void GenerateStrongWrapper(string baseName, ITypeInfo typeInfo, Action<string> AppendLine) {
         using var pAttrLease = TypeInfoDescriptor.TypeAttributes(typeInfo);
@@ -81,10 +110,12 @@ public partial class UiaAdapterWrapper {
             AppendLine("[global::System.Diagnostics.DebuggerTypeProxy(typeof(ComProxyDebugView))]");
         }
 
+        bool baseHasGetMissing = isAdobeCollection;
+        string getMissingNewMod = baseHasGetMissing ? "new " : "";
         string safeTypeName = Sanitize(baseName);
         AppendLine(/*lang=c#*/ $$"""
 public class {{safeTypeName}}{{inheritance}} {
-    public static {{safeTypeName}} GetMissing() => global::{{RootNamespace}}.ComProxy.Missing<{{safeTypeName}}>();
+    public {{getMissingNewMod}}static {{safeTypeName}} GetMissing() => global::{{RootNamespace}}.ComProxy.Missing<{{safeTypeName}}>();
     {{(!isCollection && baseName.Equals("Application", StringComparison.OrdinalIgnoreCase)
         ? $"public {safeTypeName}(object comInstance) : base(comInstance) {{ AttachBehavior(new ComBehavior());}}"
         : $"public {safeTypeName}(object comInstance) : base(comInstance) {{ }}")}}
@@ -100,6 +131,10 @@ public class {{safeTypeName}}{{inheritance}} {
 
         if (isAdobeObjects)
             AppendLine(AdobeObjectsMembers);
+
+        AdobeObjectsMemberSignatures? adobeObjectsSignatures = isAdobeCollection
+            ? GetAdobeObjectsMemberSignatures()
+            : null;
 
         MemberModel members = ReadMembers(typeInfo, attr.cFuncs, itemName, isCollection);
         var props = members.Properties;
@@ -117,8 +152,10 @@ public class {{safeTypeName}}{{inheritance}} {
         emittedMemberNames.Add("GetDebuggerProperties");
         emittedMemberNames.Add("ReadDebuggerProperty");
 
-        if (isAdobeObjects)
+        if (isAdobeObjects) {
             emittedMemberNames.Add("Add");
+            emittedMemberNames.Add("Remove");
+        }
 
         if (usesCollectionBase) {
             emittedMemberNames.Add("Count");
@@ -141,8 +178,6 @@ public class {{safeTypeName}}{{inheritance}} {
             emittedMemberNames.Add("AnyItem");
             emittedMemberNames.Add("ItemByID");
             emittedMemberNames.Add("ItemByRange");
-            emittedMemberNames.Add("Remove");
-
         }
 
         bool IsSafeDebuggerMethod(string name) =>
@@ -229,8 +264,10 @@ public class {{safeTypeName}}{{inheritance}} {
                 true => $"        set => SetIndexer(\"Item\", value, 0, {(indexerHasSetPut ? "true" : "false")}, {(indexerHasSetRef ? "true" : "false")}, {indexerArguments});{Environment.NewLine}",
                 false => string.Empty
             };
+            string indexerItemHidingKey = isTwoDimensional ? "Item(object, object)" : "Item(object)";
+            string indexerItemNewMod = GetMethodNewModifier("Item", "Item", indexerItemHidingKey, isAdobeCollection, adobeObjectsSignatures);
             string indexerItemMethod = indexerHasGet switch {
-                true => $"    public {indexerDeclType} Item({indexerParameters}) => this[{indexerArguments}];{Environment.NewLine}",
+                true => $"    public {indexerItemNewMod}{indexerDeclType} Item({indexerParameters}) => this[{indexerArguments}];{Environment.NewLine}",
                 false => string.Empty
             };
 
@@ -249,8 +286,8 @@ public class {{safeTypeName}}{{inheritance}} {
                 continue;
             emittedMemberNames.Add(prop.Name);
 
-            string newMod = (isAdobeCollection && DiscoveredObjectsMembers.Contains(prop.Name)) ? "new " : "";
             string propIdentifier = SafeMemberName(prop.Name, baseName);
+            string newMod = GetPropertyNewModifier(propIdentifier, prop.Name, isAdobeCollection, adobeObjectsSignatures);
             string sanitizedPropName = Sanitize(prop.Name);
             string propComName = GetCanonicalTypeName(prop.Name);
 
@@ -349,10 +386,19 @@ public class {{safeTypeName}}{{inheritance}} {
             """,
                 (false, false) => string.Empty
             };
+            string directGetterName = $"Get{propIdentifier}Direct";
+            string directGetterNewMod = GetMethodNewModifier(directGetterName, directGetterName, $"{directGetterName}()", isAdobeCollection, adobeObjectsSignatures);
             string directGetterDeclaration = (isBlacklisted && prop.HasGet, directGetterExpression) switch {
-                (true, string expression) => $"    public {newMod}{propertyType} Get{propIdentifier}Direct() => {expression};",
+                (true, string expression) => $"    public {directGetterNewMod}{propertyType} {directGetterName}() => {expression};",
                 _ => string.Empty
             };
+
+            if (isAdobeObjects && !string.IsNullOrEmpty(propertyDeclaration))
+                _emittedAdobeObjectsPropertyNames.Add(propIdentifier);
+            if (isAdobeObjects && !string.IsNullOrEmpty(directGetterDeclaration)) {
+                _emittedAdobeObjectsMethodNames.Add(directGetterName);
+                _emittedAdobeObjectsMethodSignatures.Add($"{directGetterName}()");
+            }
 
             AppendLine(/*lang=c#*/ $$"""
             {{propertyDeclaration}}
@@ -364,7 +410,6 @@ public class {{safeTypeName}}{{inheritance}} {
             if (emittedMemberNames.Contains(fn.Name))
                 continue;
 
-            string newMod = (isAdobeCollection && DiscoveredObjectsMembers.Contains(fn.Name)) ? "new " : "";
             string wrapRet = GetCanonicalTypeName(ResolveWrapperTypeName(fn.RawReturnType, fn.Name));
             string cleanWrapRet = wrapRet.TrimEnd('?');
             string cleanWrapRetNoGlobal = cleanWrapRet.StartsWith("global::", StringComparison.Ordinal)
@@ -412,6 +457,7 @@ public class {{safeTypeName}}{{inheritance}} {
                                   && fnComName.Equals("Quit", StringComparison.OrdinalIgnoreCase);
 
             List<string> declParams = new();
+            List<string> declParamTypes = new();
             List<string> passParamsLate = new();
 
             int lastRequiredIndex = -1;
@@ -435,20 +481,24 @@ public class {{safeTypeName}}{{inheritance}} {
                     : KnownEnums.Contains(cleanPWrapType);
                 bool isStringParam = pRawType == "string" || pName.Equals("VersionComments", StringComparison.OrdinalIgnoreCase);
 
+                string paramTypeForDecl;
                 if (pRawType == "void" || cleanPWrapType == "void") {
+                    paramTypeForDecl = "object";
                     declParams.Add(canEmitDefault ? $"object {pName} = default" : $"object {pName}");
                 }
                 else if (isParamEnum) {
                     string qualified = QualifyType(cleanPWrapType);
+                    paramTypeForDecl = qualified;
                     if (canEmitDefault) {
                         string defaultLiteral = FormatEnumDefaultLiteral(hasDefault, defaultValue, qualified, firstEnumMember);
                         declParams.Add($"{qualified} {pName} = {defaultLiteral}");
                     }
                     else {
-                        declParams.Add(isOptional ? $"{qualified} {pName}" : $"{qualified} {pName}");
+                        declParams.Add($"{qualified} {pName}");
                     }
                 }
                 else if (isStringParam) {
+                    paramTypeForDecl = "string";
                     if (canEmitDefault) {
                         string defaultLiteral = FormatStringDefaultLiteral(hasDefault, defaultValue);
                         declParams.Add($"string {pName} = {defaultLiteral}");
@@ -459,18 +509,22 @@ public class {{safeTypeName}}{{inheritance}} {
                 }
                 else if (IsPrimitiveType(cleanPWrapType)) {
                     string qualified = QualifyType(cleanPWrapType);
+                    paramTypeForDecl = qualified;
                     if (canEmitDefault) {
                         string defaultLiteral = FormatPrimitiveDefaultLiteral(hasDefault, defaultValue, cleanPWrapType);
                         declParams.Add($"{qualified} {pName} = {defaultLiteral}");
                     }
                     else {
-                        declParams.Add(isOptional ? $"{qualified} {pName}" : $"{qualified} {pName}");
+                        declParams.Add($"{qualified} {pName}");
                     }
                 }
                 else {
                     string qualified = QualifyType(cleanPWrapType);
+                    paramTypeForDecl = qualified;
                     declParams.Add(canEmitDefault ? $"{qualified} {pName} = default" : $"{qualified} {pName}");
                 }
+
+                declParamTypes.Add(NormalizeTypeForSignature(paramTypeForDecl));
 
                 bool isWrapperOrObjectParam = !isStringParam && !isParamEnum && !IsPrimitiveType(cleanPWrapType) &&
                     pRawType != "void" && cleanPWrapType != "void" &&
@@ -480,10 +534,18 @@ public class {{safeTypeName}}{{inheritance}} {
                     : pName);
             }
 
-            string signature = $"{newMod}{methodDeclRet} {methodIdentifier}({string.Join(", ", declParams)})";
+            string methodHidingKey = $"{methodIdentifier}({string.Join(", ", declParamTypes)})";
+            string newMod = GetMethodNewModifier(methodIdentifier, fn.Name, methodHidingKey, isAdobeCollection, adobeObjectsSignatures);
+            string signatureWithoutNew = $"{methodDeclRet} {methodIdentifier}({string.Join(", ", declParams)})";
+            string signature = $"{newMod}{signatureWithoutNew}";
             string lateArgsStrWithComma = passParamsLate.Count > 0 ? ", " + string.Join(", ", passParamsLate) : "";
 
-            if (emittedWrapperMethodSignatures.Add(signature)) {
+            if (emittedWrapperMethodSignatures.Add(signatureWithoutNew)) {
+                if (isAdobeObjects) {
+                    _emittedAdobeObjectsMethodNames.Add(methodIdentifier);
+                    _emittedAdobeObjectsMethodSignatures.Add(methodHidingKey);
+                }
+
                 if (isVoidRet) {
                     AppendLine(isApplicationQuit
                         ? /*lang=c#*/ $$"""
@@ -516,6 +578,9 @@ public class {{safeTypeName}}{{inheritance}} {
             }
         }
 
+        if (isAdobeObjects)
+            _hasEmittedAdobeObjectsMembers = true;
+
         AppendLine(/*lang=c#*/ $$"""
         {{(isObjects && !isAdobeObjects ? /*lang=c#*/"""
             public global::System.Collections.Generic.IEnumerator<ComProxy> GetEnumerator()
@@ -529,6 +594,546 @@ public class {{safeTypeName}}{{inheritance}} {
         }
 
         """);
+    }
+
+    private string GetPropertyNewModifier(
+        string propIdentifier,
+        string rawPropName,
+        bool isAdobeCollection,
+        AdobeObjectsMemberSignatures? adobeObjectsSignatures) {
+        if (ComProxyPropertyNames.Contains(propIdentifier) ||
+            ComProxyMethodNames.Contains(propIdentifier))
+            return "new ";
+
+        if (!isAdobeCollection)
+            return "";
+
+        if (adobeObjectsSignatures is not null &&
+            (adobeObjectsSignatures.PropertyNames.Contains(propIdentifier) ||
+             adobeObjectsSignatures.MethodNames.Contains(propIdentifier))) {
+            return "new ";
+        }
+
+        if (_hasEmittedAdobeObjectsMembers) {
+            return (_emittedAdobeObjectsPropertyNames.Contains(propIdentifier) ||
+                    _emittedAdobeObjectsMethodNames.Contains(propIdentifier))
+                ? "new "
+                : "";
+        }
+
+        return DiscoveredObjectsMembers.Contains(rawPropName) ? "new " : "";
+    }
+
+    private string GetMethodNewModifier(
+        string methodIdentifier,
+        string rawMethodName,
+        string methodHidingKey,
+        bool isAdobeCollection,
+        AdobeObjectsMemberSignatures? adobeObjectsSignatures) {
+        if (ComProxyPropertyNames.Contains(methodIdentifier) ||
+            ComProxyMethodSignatures.Contains(methodHidingKey))
+            return "new ";
+
+        if (!isAdobeCollection)
+            return "";
+
+        if (adobeObjectsSignatures is not null) {
+            if (adobeObjectsSignatures.PropertyNames.Contains(methodIdentifier) ||
+                adobeObjectsSignatures.MethodSignatures.Contains(methodHidingKey)) {
+                return "new ";
+            }
+        }
+
+        if (_hasEmittedAdobeObjectsMembers) {
+            return (_emittedAdobeObjectsPropertyNames.Contains(methodIdentifier) ||
+                    _emittedAdobeObjectsMethodSignatures.Contains(methodHidingKey))
+                ? "new "
+                : "";
+        }
+
+        if (methodIdentifier.Equals("Add", StringComparison.Ordinal) ||
+            (adobeObjectsSignatures is not null && adobeObjectsSignatures.MethodNames.Contains(methodIdentifier))) {
+            return "";
+        }
+
+        return DiscoveredObjectsMembers.Contains(rawMethodName) ? "new " : "";
+    }
+
+    private AdobeObjectsMemberSignatures GetAdobeObjectsMemberSignatures() {
+        string source = AdobeObjectsMembers ?? string.Empty;
+        if (_cachedAdobeObjectsSignatures is not null &&
+            string.Equals(_cachedAdobeObjectsMembersSource, source, StringComparison.Ordinal)) {
+            return _cachedAdobeObjectsSignatures;
+        }
+
+        var parsed = ParseAdobeObjectsMemberSignatures(source);
+        _cachedAdobeObjectsMembersSource = source;
+        _cachedAdobeObjectsSignatures = parsed;
+        return parsed;
+    }
+
+    private AdobeObjectsMemberSignatures ParseAdobeObjectsMemberSignatures(string source) {
+        HashSet<string> propertyNames = new(StringComparer.Ordinal);
+        HashSet<string> methodNames = new(StringComparer.Ordinal);
+        HashSet<string> methodSignatures = new(StringComparer.Ordinal);
+
+        int i = 0;
+        int len = source.Length;
+
+        while (i < len) {
+            SkipWhitespaceAndComments(source, ref i);
+            while (i < len && source[i] == '[') {
+                SkipBalanced(source, ref i, '[', ']');
+                SkipWhitespaceAndComments(source, ref i);
+            }
+
+            if (i >= len)
+                break;
+
+            int headerStart = i;
+            int parenStart = -1;
+            int parenEnd = -1;
+            bool hasTopLevelAssignmentBeforeParen = false;
+            bool sawAssignmentAtTopLevel = false;
+
+            while (i < len) {
+                if (TrySkipCommentOrLiteral(source, ref i))
+                    continue;
+
+                char ch = source[i];
+                if (ch == '(') {
+                    if (sawAssignmentAtTopLevel)
+                        hasTopLevelAssignmentBeforeParen = true;
+                    parenStart = i;
+                    SkipBalanced(source, ref i, '(', ')');
+                    parenEnd = i - 1;
+                    continue;
+                }
+
+                if (ch == '[') {
+                    SkipBalanced(source, ref i, '[', ']');
+                    continue;
+                }
+
+                if (ch == '{' || ch == ';')
+                    break;
+
+                if (ch == '=' && i + 1 < len && source[i + 1] == '>')
+                    break;
+
+                if (ch == '=' && !sawAssignmentAtTopLevel)
+                    sawAssignmentAtTopLevel = true;
+
+                i++;
+            }
+
+            char terminator = i < len ? source[i] : '\0';
+            string header = source[headerStart..i];
+
+            if (!ContainsWord(header, "private")) {
+                if (parenStart >= 0 && !hasTopLevelAssignmentBeforeParen) {
+                    string? methodName = ExtractMethodNameBeforeParen(source, headerStart, parenStart);
+                    if (!string.IsNullOrEmpty(methodName)) {
+                        string rawParams = source[(parenStart + 1)..parenEnd];
+                        List<string> paramTypes = ParseParameterTypes(rawParams);
+                        methodNames.Add(methodName);
+                        methodSignatures.Add($"{methodName}({string.Join(", ", paramTypes)})");
+                    }
+                }
+                else if (terminator == '{' || terminator == '=') {
+                    string? propName = ExtractTrailingIdentifier(header);
+                    if (!string.IsNullOrEmpty(propName))
+                        propertyNames.Add(propName);
+                }
+            }
+
+            if (terminator == '{') {
+                SkipBalanced(source, ref i, '{', '}');
+            }
+            else if (terminator == '=') {
+                i += 2;
+                while (i < len) {
+                    if (TrySkipCommentOrLiteral(source, ref i))
+                        continue;
+
+                    char ch = source[i];
+                    if (ch == '{') {
+                        SkipBalanced(source, ref i, '{', '}');
+                        continue;
+                    }
+                    if (ch == '(') {
+                        SkipBalanced(source, ref i, '(', ')');
+                        continue;
+                    }
+                    if (ch == '[') {
+                        SkipBalanced(source, ref i, '[', ']');
+                        continue;
+                    }
+                    if (ch == ';') {
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+            }
+            else if (terminator == ';') {
+                i++;
+            }
+        }
+
+        return new AdobeObjectsMemberSignatures(propertyNames, methodNames, methodSignatures);
+    }
+
+    private List<string> ParseParameterTypes(string rawParams) {
+        List<string> result = new();
+        if (string.IsNullOrWhiteSpace(rawParams))
+            return result;
+
+        int start = 0;
+        int i = 0;
+        int angleDepth = 0;
+
+        while (i < rawParams.Length) {
+            if (TrySkipCommentOrLiteral(rawParams, ref i))
+                continue;
+
+            char ch = rawParams[i];
+            if (ch == '(') {
+                SkipBalanced(rawParams, ref i, '(', ')');
+                continue;
+            }
+            if (ch == '[') {
+                SkipBalanced(rawParams, ref i, '[', ']');
+                continue;
+            }
+            if (ch == '{') {
+                SkipBalanced(rawParams, ref i, '{', '}');
+                continue;
+            }
+            if (ch == '<') {
+                angleDepth++;
+            }
+            else if (ch == '>' && angleDepth > 0) {
+                angleDepth--;
+            }
+            else if (ch == ',' && angleDepth == 0) {
+                string? paramType = ExtractParameterType(rawParams[start..i]);
+                if (!string.IsNullOrEmpty(paramType))
+                    result.Add(paramType);
+                start = i + 1;
+            }
+
+            i++;
+        }
+
+        string? lastParamType = ExtractParameterType(rawParams[start..]);
+        if (!string.IsNullOrEmpty(lastParamType))
+            result.Add(lastParamType);
+
+        return result;
+    }
+
+    private string? ExtractParameterType(string parameterSlice) {
+        int i = 0;
+        int angleDepth = 0;
+        int equalsIndex = -1;
+
+        while (i < parameterSlice.Length) {
+            if (TrySkipCommentOrLiteral(parameterSlice, ref i))
+                continue;
+
+            char ch = parameterSlice[i];
+            if (ch == '(') {
+                SkipBalanced(parameterSlice, ref i, '(', ')');
+                continue;
+            }
+            if (ch == '[') {
+                SkipBalanced(parameterSlice, ref i, '[', ']');
+                continue;
+            }
+            if (ch == '{') {
+                SkipBalanced(parameterSlice, ref i, '{', '}');
+                continue;
+            }
+            if (ch == '<') {
+                angleDepth++;
+            }
+            else if (ch == '>' && angleDepth > 0) {
+                angleDepth--;
+            }
+            else if (ch == '=' && angleDepth == 0) {
+                equalsIndex = i;
+                break;
+            }
+
+            i++;
+        }
+
+        string decl = (equalsIndex >= 0 ? parameterSlice[..equalsIndex] : parameterSlice).Trim();
+        int attrIdx = 0;
+        while (attrIdx < decl.Length && decl[attrIdx] == '[') {
+            SkipBalanced(decl, ref attrIdx, '[', ']');
+            while (attrIdx < decl.Length && char.IsWhiteSpace(decl[attrIdx]))
+                attrIdx++;
+        }
+
+        decl = decl[attrIdx..].Trim();
+        if (decl.Length == 0)
+            return null;
+
+        int end = decl.Length;
+        while (end > 0 && char.IsWhiteSpace(decl[end - 1]))
+            end--;
+
+        int nameStart = end;
+        while (nameStart > 0 && (char.IsLetterOrDigit(decl[nameStart - 1]) || decl[nameStart - 1] == '_' || decl[nameStart - 1] == '@'))
+            nameStart--;
+
+        if (nameStart == 0 || nameStart == end)
+            return null;
+
+        string typePart = decl[..nameStart].Trim();
+        while (true) {
+            string? trimmedModifier = StripLeadingModifier(typePart, "this")
+                ?? StripLeadingModifier(typePart, "params")
+                ?? StripLeadingModifier(typePart, "ref")
+                ?? StripLeadingModifier(typePart, "out")
+                ?? StripLeadingModifier(typePart, "in")
+                ?? StripLeadingModifier(typePart, "scoped");
+            if (trimmedModifier is null)
+                break;
+            typePart = trimmedModifier;
+        }
+
+        return typePart.Length == 0 ? null : NormalizeTypeForSignature(typePart);
+    }
+
+    private string NormalizeTypeForSignature(string typeName) {
+        string normalized = typeName.Replace("global::", "", StringComparison.Ordinal).Trim();
+        if (!string.IsNullOrEmpty(RootNamespace))
+            normalized = normalized.Replace(RootNamespace + ".", "", StringComparison.Ordinal);
+
+        var sb = new StringBuilder(normalized.Length);
+        bool pendingSpace = false;
+        for (int i = 0; i < normalized.Length; i++) {
+            char ch = normalized[i];
+            if (char.IsWhiteSpace(ch)) {
+                pendingSpace = sb.Length > 0;
+                continue;
+            }
+
+            if (ch is '<' or '>' or ',' or '[' or ']' or '?' or '.') {
+                pendingSpace = false;
+                sb.Append(ch);
+                continue;
+            }
+
+            if (pendingSpace && sb.Length > 0 && sb[^1] is not ('<' or ',' or '[' or '.')) {
+                sb.Append(ch == ',' ? "" : " ");
+            }
+            pendingSpace = false;
+            sb.Append(ch);
+        }
+
+        normalized = sb.ToString()
+            .Replace(",", ", ", StringComparison.Ordinal)
+            .Replace("System.Object", "object", StringComparison.Ordinal)
+            .Replace("System.String", "string", StringComparison.Ordinal)
+            .Replace("System.Boolean", "bool", StringComparison.Ordinal)
+            .Replace("System.Byte", "byte", StringComparison.Ordinal)
+            .Replace("System.SByte", "sbyte", StringComparison.Ordinal)
+            .Replace("System.Int16", "short", StringComparison.Ordinal)
+            .Replace("System.UInt16", "ushort", StringComparison.Ordinal)
+            .Replace("System.Int32", "int", StringComparison.Ordinal)
+            .Replace("System.UInt32", "uint", StringComparison.Ordinal)
+            .Replace("System.Int64", "long", StringComparison.Ordinal)
+            .Replace("System.UInt64", "ulong", StringComparison.Ordinal)
+            .Replace("System.Single", "float", StringComparison.Ordinal)
+            .Replace("System.Double", "double", StringComparison.Ordinal)
+            .Replace("System.Decimal", "decimal", StringComparison.Ordinal);
+
+        if (normalized.EndsWith("?", StringComparison.Ordinal)) {
+            string withoutNullable = normalized[..^1];
+            if (!IsPrimitiveType(withoutNullable) &&
+                withoutNullable is not ("char" or "nint" or "nuint") &&
+                !KnownEnums.Contains(withoutNullable) &&
+                !KnownExternalEnums.Contains(withoutNullable)) {
+                normalized = withoutNullable;
+            }
+        }
+
+        return normalized;
+    }
+
+    private static string? StripLeadingModifier(string value, string modifier) {
+        if (value.StartsWith(modifier, StringComparison.Ordinal) &&
+            value.Length > modifier.Length &&
+            char.IsWhiteSpace(value[modifier.Length])) {
+            return value[modifier.Length..].TrimStart();
+        }
+        return null;
+    }
+
+    private static string? ExtractMethodNameBeforeParen(string source, int headerStart, int parenStart) {
+        int idx = parenStart - 1;
+        while (idx >= headerStart && char.IsWhiteSpace(source[idx]))
+            idx--;
+
+        if (idx >= headerStart && source[idx] == '>') {
+            int depth = 1;
+            idx--;
+            while (idx >= headerStart && depth > 0) {
+                if (source[idx] == '>')
+                    depth++;
+                else if (source[idx] == '<')
+                    depth--;
+                idx--;
+            }
+            while (idx >= headerStart && char.IsWhiteSpace(source[idx]))
+                idx--;
+        }
+
+        int end = idx + 1;
+        while (idx >= headerStart && (char.IsLetterOrDigit(source[idx]) || source[idx] == '_' || source[idx] == '@'))
+            idx--;
+
+        int start = idx + 1;
+        if (start >= end)
+            return null;
+
+        return source[start..end];
+    }
+
+    private static string? ExtractTrailingIdentifier(string header) {
+        int end = header.Length;
+        while (end > 0 && char.IsWhiteSpace(header[end - 1]))
+            end--;
+
+        int start = end;
+        while (start > 0 && (char.IsLetterOrDigit(header[start - 1]) || header[start - 1] == '_' || header[start - 1] == '@'))
+            start--;
+
+        if (start >= end)
+            return null;
+
+        return header[start..end];
+    }
+
+    private static bool ContainsWord(string text, string word) {
+        int idx = 0;
+        while ((idx = text.IndexOf(word, idx, StringComparison.Ordinal)) >= 0) {
+            bool leftOk = idx == 0 || !(char.IsLetterOrDigit(text[idx - 1]) || text[idx - 1] == '_');
+            int after = idx + word.Length;
+            bool rightOk = after == text.Length || !(char.IsLetterOrDigit(text[after]) || text[after] == '_');
+            if (leftOk && rightOk)
+                return true;
+            idx += word.Length;
+        }
+        return false;
+    }
+
+    private static void SkipWhitespaceAndComments(string source, ref int i) {
+        while (i < source.Length) {
+            if (char.IsWhiteSpace(source[i])) {
+                i++;
+                continue;
+            }
+            if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '/') {
+                i += 2;
+                while (i < source.Length && source[i] != '\n')
+                    i++;
+                continue;
+            }
+            if (source[i] == '/' && i + 1 < source.Length && source[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < source.Length && !(source[i] == '*' && source[i + 1] == '/'))
+                    i++;
+                i = Math.Min(source.Length, i + 2);
+                continue;
+            }
+            break;
+        }
+    }
+
+    private static bool TrySkipCommentOrLiteral(string source, ref int i) {
+        char ch = source[i];
+        if (ch == '/' && i + 1 < source.Length && source[i + 1] == '/') {
+            i += 2;
+            while (i < source.Length && source[i] != '\n')
+                i++;
+            return true;
+        }
+        if (ch == '/' && i + 1 < source.Length && source[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < source.Length && !(source[i] == '*' && source[i + 1] == '/'))
+                i++;
+            i = Math.Min(source.Length, i + 2);
+            return true;
+        }
+        if (ch == '@' && i + 1 < source.Length && source[i + 1] == '"') {
+            i += 2;
+            while (i < source.Length) {
+                if (source[i] == '"') {
+                    if (i + 1 < source.Length && source[i + 1] == '"') {
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            return true;
+        }
+        if (ch == '"') {
+            i++;
+            while (i < source.Length) {
+                if (source[i] == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (source[i] == '"') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            return true;
+        }
+        if (ch == '\'') {
+            i++;
+            while (i < source.Length) {
+                if (source[i] == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (source[i] == '\'') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static void SkipBalanced(string source, ref int i, char open, char close) {
+        if (i >= source.Length || source[i] != open)
+            return;
+
+        int depth = 1;
+        i++;
+        while (i < source.Length && depth > 0) {
+            if (TrySkipCommentOrLiteral(source, ref i))
+                continue;
+
+            if (source[i] == open)
+                depth++;
+            else if (source[i] == close)
+                depth--;
+            i++;
+        }
     }
 
     private static string FormatEnumDefaultLiteral(bool hasDefault, object? defaultValue, string qualifiedEnumType, string? firstEnumMember) {

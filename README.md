@@ -57,7 +57,7 @@ Windows runs on COM — from Microsoft Office, Adobe Creative Cloud, and Autodes
 
 People often ask why 30-year-old **VBA** remains so entrenched in Office, Access, and AutoCAD automation—even among experienced C# teams. Technologically, VBA and modern .NET sit on opposite ends of the spectrum:
 
-| Dimension | VBA (1990s Scripting) | Legacy PIA (.NET Interop) | **UIA (.NET 10 + Native AOT)** |
+| Dimension | VBA (1990s Scripting) | Legacy PIA (.NET Interop) | **UIA (.NET 8–11 + Native AOT)** |
 | :--- | :--- | :--- | :--- |
 | **Runtime & Compilation** | Interpreted / p-code scripting inside host documents | JIT-only managed code (breaks Native AOT & trimming) | **Statically compiled C#, full Native AOT support** |
 | **Type System** | Dynamic / `Variant`-heavy, weak compile-time guarantees | Static types (on brittle, version-locked PIAs) | **Static C# types, zero PIA, zero `dynamic`** |
@@ -119,7 +119,7 @@ Marshal.FinalReleaseComObject(app);
 To survive this in PIA, you must abandon readable C# and hoist **every single property dot** (`dbEngine`, `workspaces`, `fields`) into separate variables inside nested `try/finally` blocks. **UIA bridges the technological divide completely—giving you a modern, statically typed, Native AOT-compilable C# codebase in Visual Studio *with* VBA-grade deterministic COM cleanup:**
 
 ```csharp
-// ✅ UIA (.NET 10 / Native AOT): Full Visual Studio IntelliSense, static types, Native AOT,
+// ✅ UIA (.NET 8–11 / Native AOT): Full Visual Studio IntelliSense, static types, Native AOT,
 //    VBA-grade chaining, and deterministic LIFO cleanup — zero zombies.
 using var app = Adapter.Office.Access.Application.Create("Access.Application");
 app.Visible = false;
@@ -146,7 +146,31 @@ app.CloseCurrentDatabase();
 app.Quit(); // Releases remaining tracked COM wrappers (ws, Workspaces, DBEngine, rs, db) in LIFO order before COM Quit.
 ```
 
-Even without checkpoints, `app.Quit()` clears the LIFO `Tracker` so `MSACCESS.EXE` shuts down cleanly with zero locked files. Adding `GetCheckPoint()` / `MoveCheckPoint(cp)` mirrors a VBA loop scope directly—keeping active COM handles constant (`O(1)`) whether you insert 1,000 or 100,000 rows, inside a true compiled, statically typed .NET 10 / Native AOT application. See **[LIFO Reference Tracking in ARCHITECTURE.md](ARCHITECTURE.md#own-native-references-and-marshal-values-explicitly)** for details.
+Even without checkpoints, `app.Quit()` clears the LIFO `Tracker` so `MSACCESS.EXE` shuts down cleanly with zero locked files. Adding `GetCheckPoint()` / `MoveCheckPoint(cp)` mirrors a VBA loop scope directly—keeping active COM handles constant (`O(1)`) whether you insert 1,000 or 100,000 rows, inside a true compiled, statically typed .NET / Native AOT application. See **[LIFO Reference Tracking in ARCHITECTURE.md](ARCHITECTURE.md#own-native-references-and-marshal-values-explicitly)** for details.
+
+---
+
+## Performance Benchmarks: Out-of-Process UIA vs. Early-Bound PIA
+
+A common assumption is that early-bound PIA vtable calls must always outperform `IDispatch::Invoke`. In **out-of-process COM** (Access, Excel, Outlook, PowerPoint, Word), BenchmarkDotNet measurements across equivalent real-world workloads show the opposite in call-intensive loops:
+
+| Benchmark Scenario | PIA Mean | UIA Mean | UIA Time (% of PIA) | Speedup |
+| :--- | ---: | ---: | ---: | :---: |
+| `Outlook_EnumerateInbox_Table` | 4.157 s | **1.186 s** | **29%** | **3.5× faster** |
+| `Outlook_EnumerateInbox_ItemsLoop` | 6.808 s | **3.381 s** | **50%** | **2.0× faster** |
+| `Excel_WriteCells_Chatty` | 6.526 s | **3.742 s** | **57%** | **1.7× faster** |
+| `Access_Insert1000Rows_DaoTransaction` | 10.420 s | **6.631 s** | **64%** | **1.6× faster** |
+| `PowerPoint_Create30Slides_AndExport` | 5.281 s | **4.619 s** | **89%** | **1.1× faster** |
+| `Word_Create500Paragraphs_AndExport` | 3.510 s | **3.248 s** | **93%** | **1.1× faster** |
+| `Excel_WriteCells_Batched2DArray` | **1.580 s** | 1.626 s | **103%** | Parity |
+
+*(Note: PIA was tested with full early-bound interfaces and meticulous manual `Marshal.ReleaseComObject` cleanup for every intermediate variable so processes exited cleanly).*
+
+### Why UIA beats early-bound PIA in chatty out-of-process loops
+
+1. **Out-of-process vtables still marshal across LRPC:** Early-bound PIA calls do not jump directly in memory across process boundaries—they travel through the TypeLib *Universal Marshaler* and CLR RCW plumbing (`RCWCache` lookups, multi-interface `QueryInterface` probes such as `IMarshal`/`IProvideClassInfo`/`_MailItem`, and multi-interface teardown on `Marshal.ReleaseComObject`).
+2. **Direct `IDispatch` with compile-time `DISPID`s:** In `InvokeMode.Early`, `UIAGen` bakes `DISPID`s directly into generated wrappers (skipping `GetIDsOfNames`) and invokes `IDispatch::Invoke` via `delegate* unmanaged[Stdcall]` (`calli`) with stack-allocated `VARIANT` slots—holding just one native `IDispatch*` pointer per wrapper and resolving/checking types locally in C# without cross-process `QueryInterface`.
+3. **Engine-bound workloads match PIA:** When most time is spent inside a single 2D array transfer (`Excel_WriteCells_Batched2DArray`, where UIA also uses less managed memory: `48 KB` vs `128 KB`) or document export (`Word`, `PowerPoint`), both wait on the Office process itself—while UIA still removes PIA/GAC dependencies, Native AOT blockers, and RCW reference leaks.
 
 ---
 
@@ -223,7 +247,12 @@ See the **[AutoCAD Type Library Dependency Graph Case Study](ARCHITECTURE.md#cas
 
 * **Technical Architecture & CLI Reference:** Ready to see how vtable binding, `VARIANT` stack marshaling, and debugger proxies work under the hood? Read **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-## License
+## License & Commercial Terms
 
-* **Generator (`UIAGen`):** GNU Lesser General Public License v3. See [LICENSE](LICENSE) and [LICENSE.GPL](LICENSE.GPL).
-* **Generated output:** The [Code Generation Exception](EXCEPTION) permits distribution of the generated output under terms of your choice, subject to the exception's scope. It does not relicense the generator itself.
+`UIAGen` is dual-licensed to support both open-source and commercial development while preserving authorship attribution:
+
+* **Generator (`UIAGen`):** Licensed under the **GNU Lesser General Public License v3 (LGPLv3)**. See [LICENSE](LICENSE) and [LICENSE.GPL](LICENSE.GPL).
+* **Generated Output (`Code Generation Exception`):** Under the [Code Generation Exception](EXCEPTION), you may compile, use, and distribute the generated adapter code in proprietary or open-source projects under terms of your choice, **provided that**:
+  1. All generated C# source files retain the original copyright and attribution headers (`Generated by UIAGen` / Piotr Filipowicz).
+  2. Any binary or commercial distribution using the generated adapters includes a visible acknowledgment of **UIAGen by Piotr Filipowicz** (with a link to this repository) in its documentation, "About" section, or `THIRD-PARTY-NOTICES.txt`.
+* **Commercial / White-Label Licensing:** Need to redistribute or modify `UIAGen` without LGPLv3 obligations, require white-label output without attribution notices, or need priority enterprise support and custom COM adapter integrations? Contact the author (**Piotr Filipowicz**) via [GitHub](https://github.com/PiotrFilipowicz) to obtain a commercial license.

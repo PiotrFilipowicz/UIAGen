@@ -20,8 +20,6 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using UiaAdapter.ComRuntime;
 
-//#pragma warning disable CS8602, CS8604, CS8601, CS8625, CS8765
-
 namespace UiaAdapter.TemplateSyntax {
 #endif
 

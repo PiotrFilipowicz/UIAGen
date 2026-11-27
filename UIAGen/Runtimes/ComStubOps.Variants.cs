@@ -13,7 +13,6 @@
 using System;
 using System.Runtime.InteropServices;
 
-#pragma warning disable CS8603, CS8601
 
 namespace UiaAdapter.ComRuntime {
     public static unsafe partial class ComStubOps {
@@ -310,7 +309,7 @@ namespace UiaAdapter.ComRuntime {
             }
         }
 
-        private static object Unwrap(object value) {
+        private static object? Unwrap(object value) {
             var variantValue = value as IComVariantValue;
             if (variantValue == null)
                 return value;
@@ -587,7 +586,9 @@ namespace UiaAdapter.ComRuntime {
                     int[] convertedInts = new int[objArray.Length];
 
                     for (int i = 0; i < objArray.Length; i++) {
-                        object unwrapped = Unwrap(objArray[i]);
+                        object? unwrapped = Unwrap(objArray[i]);
+                        if (unwrapped == null)
+                            throw new ArgumentNullException($"Element at index {i} in the objArray is null.");
                         if (!TryConvertToInt32(unwrapped, out convertedInts[i]))
                             allInts = false;
                         if (!(unwrapped is string))
@@ -636,7 +637,10 @@ namespace UiaAdapter.ComRuntime {
                 // Handle arbitrary one-dimensional arrays (e.g. Enum[], uint[], sbyte[])
                 object[] objArr = new object[genArray.Length];
                 for (int i = 0; i < genArray.Length; i++) {
-                    objArr[i] = genArray.GetValue(i);
+                    object? element = genArray.GetValue(i);
+                    if(element == null)
+                        throw new ArgumentNullException($"Element at index {i} in the genArray is null.");
+                    objArr[i] = element;
                 }
                 ObjectToVariant(objArr, pVar);
             }

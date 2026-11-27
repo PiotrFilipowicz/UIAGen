@@ -13,8 +13,6 @@
 using System;
 using System.Collections.Generic;
 
-#pragma warning disable CS8625
-
 namespace UiaAdapter.ComRuntime
 {
     public enum InvokeMode
@@ -42,7 +40,7 @@ namespace UiaAdapter.ComRuntime
     public sealed class Tracker : ITracker
     {
         private int _index = 0;
-        private List<object> _list = null;
+        private List<object>? _list = null;
 
         public void MoveCheckPoint(int checkPoint)
         {

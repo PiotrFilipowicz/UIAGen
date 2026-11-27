@@ -16,8 +16,10 @@
 		<PackageId>UIAGen</PackageId>
 		<Version>1.0.5</Version>
 		<Authors>Piotr Filipowicz</Authors>
-		<Description>Build-time code generator that turns Windows COM Type Libraries (TLB/DLL/EXE/ProgID) into statically typed, Native AOT-compatible C# adapters for .NET 10.</Description>
-		<PackageTags>com;interop;typelib;tlbimp;native-aot;aot;csharp;dotnet;autocad;office;indesign</PackageTags>
+		<Title>UIAGen - Native AOT COM Interop Code Generator (Zero-PIA tlbimp Replacement)</Title>
+		<Description>Build-time Windows COM Type Library (TLB) code generator and modern tlbimp.exe replacement for .NET 8/9/10/11 and .NET Standard 2.0 (.NET Framework 4.8). Generates statically typed, Native AOT-compatible C# adapters with full IntelliSense, Visual Studio debugger views, and deterministic LIFO COM reference cleanup—eliminating Primary Interop Assemblies (PIA), GAC versioning hell, C# dynamic overhead, and zombie out-of-process COM servers for AutoCAD, BricsCAD, Microsoft Office, and Adobe Creative Cloud
+		</Description>
+  		<PackageTags>com;interop;typelib;tlbimp;tlb;pia;native-aot;aot;activex;csharp;dotnet;bricscad;autocad;cad;dwg;office;excel;word;access;adobe;indesign;automation;dotnet-tool</PackageTags>
 		<PackageProjectUrl>https://github.com/PiotrFilipowicz/UIAGen</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/PiotrFilipowicz/UIAGen</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>

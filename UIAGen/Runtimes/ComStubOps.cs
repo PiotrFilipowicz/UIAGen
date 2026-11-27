@@ -13,8 +13,6 @@
 using System;
 using System.Runtime.InteropServices;
 
-#pragma warning disable CS8603, CS8625, CS8601
-
 namespace UiaAdapter.ComRuntime
 {
     public static unsafe partial class ComStubOps
@@ -92,7 +90,7 @@ namespace UiaAdapter.ComRuntime
 
         // A BSTR stores its byte length in a 4-byte prefix immediately before the first character.
         // Reading it does not require CLR marshaling.
-        public static string BstrToString(IntPtr bstr)
+        public static string? BstrToString(IntPtr bstr)
         {
             if (bstr == IntPtr.Zero) return null;
             uint byteLength = *(((uint*)bstr) - 1);
@@ -203,7 +201,7 @@ namespace UiaAdapter.ComRuntime
         }
 
         // --- Slot 3: IEnumVARIANT::Next ---
-        public static bool TryEnumVariantNext<TEmpty>(IntPtr pEnum, out object value) where TEmpty : class, IComVariantValue, new()
+        public static bool TryEnumVariantNext<TEmpty>(IntPtr pEnum, out object? value) where TEmpty : class, IComVariantValue, new()
         {
             value = null;
             if (!TryGetVTableFunction(pEnum, 3, out IntPtr nextFunction)) return false;

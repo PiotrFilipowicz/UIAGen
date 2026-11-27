@@ -102,7 +102,7 @@ public static partial class ComProxyFactory {
     private const string AdobeObjectsMembers = /*lang=c#*/ """
     
     public override int Count => GetValue<int>(nameof(Count), 1668183141);
-    public void Add(object @object, object index = default) => InvokeVoid("Add", 1668441452, @object, index);
+    public virtual void Add(object @object, object index = default) => InvokeVoid("Add", 1668441452, @object, index);
     public ComProxy FirstItem() => InvokeCollectionItem<ComProxy>("FirstItem", 1718186611);
     public ComProxy LastItem() => InvokeCollectionItem<ComProxy>("LastItem", 1818325876);
     public ComProxy MiddleItem() => InvokeCollectionItem<ComProxy>("MiddleItem", 1835623524);
@@ -139,7 +139,6 @@ public class Objects : ComProxies {
 public class Objects<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TItem> : Objects, IEnumerable<TItem> where TItem : class {
     public new static Objects<TItem> GetMissing() => ComProxy.Missing<Objects<TItem>>();
     public Objects(object comInstance) : base(comInstance) { }
-    public void Remove(int index) => InvokeVoid("Remove", 1382370678, index);
     {{typedMembers}}
     public new TItem ItemByID(int id) => InvokeCollectionItem<TItem>("ItemByID", 1115244868, id);
     public new TItem FirstItem() => InvokeCollectionItem<TItem>("FirstItem", 1718186611);
