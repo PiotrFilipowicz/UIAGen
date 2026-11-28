@@ -51,31 +51,35 @@ public partial class UiaAdapterWrapper {
         HashSet<string> MethodNames,
         HashSet<string> MethodSignatures);
 
+    private enum CollectionType {
+        none,
+        raw,
+        typed,
+        rawAdobe,
+        typedAdobe
+    }
+
+    bool IsTypedCollection(CollectionType collectionType) => collectionType == CollectionType.typed || collectionType == CollectionType.typedAdobe;
+    bool IsAdobeCollection(CollectionType collectionType) => collectionType == CollectionType.rawAdobe || collectionType == CollectionType.typedAdobe;
+
     internal void GenerateStrongWrapper(string baseName, ITypeInfo typeInfo, Action<string> AppendLine) {
         using var pAttrLease = TypeInfoDescriptor.TypeAttributes(typeInfo);
         nint pAttr = pAttrLease.Pointer;
         TYPEATTR attr = Marshal.PtrToStructure<TYPEATTR>(pAttr);
 
-        bool isObjects = baseName.Equals("Objects", StringComparison.OrdinalIgnoreCase);
-        bool isAdobeObjects = isObjects && (HasAdobeObjectsModel || IsAdobeObjectsTypeInfo(typeInfo, attr) || IsAdobeAdapter);
-        bool isRealCollection = !isObjects && IsTypeInfoCollection(typeInfo, attr);
-        bool isAdobeCollection = isRealCollection && (HasAdobeObjectsModel || IsAdobeAdapter);
-        bool usesCollectionBase = isRealCollection || isAdobeObjects;
+        CollectionType collectionType = (baseName.Equals("Objects", StringComparison.OrdinalIgnoreCase), HasAdobeObjectsModel) switch {
+            (true, false) => CollectionType.raw,
+            (true, true) => CollectionType.rawAdobe,
+            (false, false) when IsTypeInfoCollection(typeInfo, attr) => CollectionType.typed,
+            (false, true) when IsTypeInfoCollection(typeInfo, attr) => CollectionType.typedAdobe,
+            _ => CollectionType.none
+        };
 
         string inheritance;
-        bool isCollection = false;
         string itemName = baseName;
+        string debuggerViewType;
 
-        if (isObjects) {
-            inheritance = isAdobeObjects
-                ? " : ComProxies"
-                : " : ComProxy, global::System.Collections.Generic.IEnumerable<ComProxy>, global::System.Collections.IEnumerable";
-        }
-        else if (!isRealCollection) {
-            inheritance = " : ComProxy";
-        }
-        else {
-            isCollection = true;
+        if (IsTypedCollection(collectionType)) {
             string? singularCandidate = GetSingularCandidate(baseName);
 
             bool hasSpecificItemWrapper = singularCandidate != null &&
@@ -85,41 +89,39 @@ public partial class UiaAdapterWrapper {
 
             if (hasSpecificItemWrapper) {
                 itemName = GetCanonicalTypeName(singularCandidate!);
-                inheritance = isAdobeCollection
+                inheritance = collectionType == CollectionType.typedAdobe
                     ? $" : Objects<{itemName}>"
                     : $" : ComProxies<{itemName}>";
+                debuggerViewType = $"ComProxiesDebugView<{itemName}>";
             }
             else {
                 itemName = "ComProxy";
-                inheritance = isAdobeCollection ? " : Objects" : " : ComProxies";
+                inheritance = collectionType == CollectionType.typedAdobe ? " : Objects" : " : ComProxies";
+                debuggerViewType = "ComProxiesUntypedDebugView";
             }
-
-            string debuggerViewType = hasSpecificItemWrapper switch {
-                true => $"ComProxiesDebugView<{itemName}>",
-                false => "ComProxiesUntypedDebugView"
+        }
+        else {
+            (inheritance, debuggerViewType) = collectionType switch {
+                CollectionType.raw => (" : ComProxy, global::System.Collections.Generic.IEnumerable<ComProxy>, global::System.Collections.IEnumerable", "ComProxyDebugView"),
+                CollectionType.rawAdobe => (" : ComProxies", "ComProxiesUntypedDebugView"),
+                _ => (" : ComProxy", "ComProxyDebugView")
             };
-            AppendLine(/*lang=c#*/ $$"""
-            [global::System.Diagnostics.DebuggerTypeProxy(typeof({{debuggerViewType}}))]
-            """);
         }
 
-        if (isAdobeObjects) {
-            AppendLine("[global::System.Diagnostics.DebuggerTypeProxy(typeof(ComProxiesUntypedDebugView))]");
-        }
-        else if (!usesCollectionBase) {
-            AppendLine("[global::System.Diagnostics.DebuggerTypeProxy(typeof(ComProxyDebugView))]");
-        }
+        AppendLine(/*lang=c#*/ $$"""
+        [global::System.Diagnostics.DebuggerTypeProxy(typeof({{debuggerViewType}}))]
+        """);
 
-        bool baseHasGetMissing = isAdobeCollection;
+        bool baseHasGetMissing = collectionType == CollectionType.typedAdobe;
         string getMissingNewMod = baseHasGetMissing ? "new " : "";
         string safeTypeName = Sanitize(baseName);
         AppendLine(/*lang=c#*/ $$"""
 public class {{safeTypeName}}{{inheritance}} {
     public {{getMissingNewMod}}static {{safeTypeName}} GetMissing() => global::{{RootNamespace}}.ComProxy.Missing<{{safeTypeName}}>();
-    {{(!isCollection && baseName.Equals("Application", StringComparison.OrdinalIgnoreCase)
+    {{(!IsTypedCollection(collectionType) && baseName.Equals("Application", StringComparison.OrdinalIgnoreCase)
         ? $"public {safeTypeName}(object comInstance) : base(comInstance) {{ AttachBehavior(new ComBehavior());}}"
         : $"public {safeTypeName}(object comInstance) : base(comInstance) {{ }}")}}
-{{(!isCollection && baseName.Equals("Application", StringComparison.OrdinalIgnoreCase) ? """
+{{(!IsTypedCollection(collectionType) && baseName.Equals("Application", StringComparison.OrdinalIgnoreCase) ? """
     public static Application Create(string progId) {
         using var appPtr = ComInvoker.CreateFromProgID(progId);
         var app = new Application(appPtr);
@@ -129,14 +131,12 @@ public class {{safeTypeName}}{{inheritance}} {
 """ : null)}}
 """);
 
-        if (isAdobeObjects)
+        if (collectionType == CollectionType.rawAdobe)
             AppendLine(AdobeObjectsMembers);
 
-        AdobeObjectsMemberSignatures? adobeObjectsSignatures = isAdobeCollection
-            ? GetAdobeObjectsMemberSignatures()
-            : null;
+        AdobeObjectsMemberSignatures? adobeObjectsSignatures = collectionType == CollectionType.typedAdobe ? GetAdobeObjectsMemberSignatures() : null;
 
-        MemberModel members = ReadMembers(typeInfo, attr.cFuncs, itemName, isCollection);
+        MemberModel members = ReadMembers(typeInfo, attr.cFuncs, itemName, IsTypedCollection(collectionType));
         var props = members.Properties;
         var funcs = members.Methods;
         var (indexerHasGet, indexerHasSet, indexerHasSetPut, indexerHasSetRef, indexerParamCount, indexerRawRet, indexerWrapRet) = members.Indexer;
@@ -152,12 +152,7 @@ public class {{safeTypeName}}{{inheritance}} {
         emittedMemberNames.Add("GetDebuggerProperties");
         emittedMemberNames.Add("ReadDebuggerProperty");
 
-        if (isAdobeObjects) {
-            emittedMemberNames.Add("Add");
-            emittedMemberNames.Add("Remove");
-        }
-
-        if (usesCollectionBase) {
+        if (collectionType is not CollectionType.none and not CollectionType.raw) {
             emittedMemberNames.Add("Count");
             emittedMemberNames.Add("Item");
             emittedMemberNames.Add("_Default");
@@ -168,7 +163,7 @@ public class {{safeTypeName}}{{inheritance}} {
             emittedMemberNames.Add("GetEnumerator");
         }
 
-        if (isAdobeCollection || isAdobeObjects) {
+        if (IsAdobeCollection(collectionType)) {
             emittedMemberNames.Add("FirstItem");
             emittedMemberNames.Add("LastItem");
             emittedMemberNames.Add("MiddleItem");
@@ -178,6 +173,11 @@ public class {{safeTypeName}}{{inheritance}} {
             emittedMemberNames.Add("AnyItem");
             emittedMemberNames.Add("ItemByID");
             emittedMemberNames.Add("ItemByRange");
+        }
+
+        if (collectionType == CollectionType.rawAdobe) {
+            emittedMemberNames.Add("Add");
+            emittedMemberNames.Add("Remove");
         }
 
         bool IsSafeDebuggerMethod(string name) =>
@@ -194,7 +194,7 @@ public class {{safeTypeName}}{{inheritance}} {
                 return (Metadata: $"\"{displayName}\", \"{comName}\", {prop.DispId}, {isBlocked}", Read: memberName);
             });
         var debuggerMethodMembers = funcs
-            .Where(fn => (isAdobeCollection || isAdobeObjects) &&
+            .Where(fn => IsAdobeCollection(collectionType) &&
                 IsSafeDebuggerMethod(fn.Name) &&
                 fn.Params.All(parameter => parameter.IsOptional))
             .Where(fn => !props.TryGetValue(fn.Name, out PropModel? prop) || !prop.HasGet)
@@ -223,13 +223,13 @@ public class {{safeTypeName}}{{inheritance}} {
 
         AppendLine("");
 
-        if (indexerHasGet || indexerHasSet || isCollection) {
+        if (indexerHasGet || indexerHasSet || IsTypedCollection(collectionType)) {
             emittedMemberNames.Add("Item");
             emittedMemberNames.Add("_Default");
             emittedMemberNames.Add("_NewEnum");
         }
 
-        if (!usesCollectionBase && (indexerHasGet || indexerHasSet)) {
+        if ((collectionType is CollectionType.none or CollectionType.raw) && (indexerHasGet || indexerHasSet)) {
             string cleanIndexerType = GetCanonicalTypeName(indexerWrapRet.TrimEnd('?'));
             string cleanIndexerNoGlobal = cleanIndexerType.StartsWith("global::", StringComparison.Ordinal)
                 ? cleanIndexerType[8..]
@@ -265,7 +265,7 @@ public class {{safeTypeName}}{{inheritance}} {
                 false => string.Empty
             };
             string indexerItemHidingKey = isTwoDimensional ? "Item(object, object)" : "Item(object)";
-            string indexerItemNewMod = GetMethodNewModifier("Item", "Item", indexerItemHidingKey, isAdobeCollection, adobeObjectsSignatures);
+            string indexerItemNewMod = GetMethodNewModifier("Item", "Item", indexerItemHidingKey, collectionType, adobeObjectsSignatures);
             string indexerItemMethod = indexerHasGet switch {
                 true => $"    public {indexerItemNewMod}{indexerDeclType} Item({indexerParameters}) => this[{indexerArguments}];{Environment.NewLine}",
                 false => string.Empty
@@ -287,7 +287,7 @@ public class {{safeTypeName}}{{inheritance}} {
             emittedMemberNames.Add(prop.Name);
 
             string propIdentifier = SafeMemberName(prop.Name, baseName);
-            string newMod = GetPropertyNewModifier(propIdentifier, prop.Name, isAdobeCollection, adobeObjectsSignatures);
+            string newMod = GetPropertyNewModifier(propIdentifier, prop.Name, collectionType, adobeObjectsSignatures);
             string sanitizedPropName = Sanitize(prop.Name);
             string propComName = GetCanonicalTypeName(prop.Name);
 
@@ -387,15 +387,15 @@ public class {{safeTypeName}}{{inheritance}} {
                 (false, false) => string.Empty
             };
             string directGetterName = $"Get{propIdentifier}Direct";
-            string directGetterNewMod = GetMethodNewModifier(directGetterName, directGetterName, $"{directGetterName}()", isAdobeCollection, adobeObjectsSignatures);
+            string directGetterNewMod = GetMethodNewModifier(directGetterName, directGetterName, $"{directGetterName}()", collectionType, adobeObjectsSignatures);
             string directGetterDeclaration = (isBlacklisted && prop.HasGet, directGetterExpression) switch {
                 (true, string expression) => $"    public {directGetterNewMod}{propertyType} {directGetterName}() => {expression};",
                 _ => string.Empty
             };
 
-            if (isAdobeObjects && !string.IsNullOrEmpty(propertyDeclaration))
+            if (collectionType == CollectionType.rawAdobe && !string.IsNullOrEmpty(propertyDeclaration))
                 _emittedAdobeObjectsPropertyNames.Add(propIdentifier);
-            if (isAdobeObjects && !string.IsNullOrEmpty(directGetterDeclaration)) {
+            if (collectionType == CollectionType.rawAdobe && !string.IsNullOrEmpty(directGetterDeclaration)) {
                 _emittedAdobeObjectsMethodNames.Add(directGetterName);
                 _emittedAdobeObjectsMethodSignatures.Add($"{directGetterName}()");
             }
@@ -436,7 +436,7 @@ public class {{safeTypeName}}{{inheritance}} {
             bool isComProxyRet = cleanWrapRet == "ComProxy";
             bool isCollectionRet = cleanWrapRet.Contains("ComProxies") || cleanWrapRet.Contains("Objects<");
             bool isExternalRet = cleanWrapRet.StartsWith("global::") || cleanWrapRet.Contains('.');
-            bool isCollectionItemLookup = isCollection &&
+            bool isCollectionItemLookup = IsTypedCollection(collectionType) &&
                 (fn.Name.Equals("ItemByID", StringComparison.OrdinalIgnoreCase) ||
                  fn.Name.Equals("ItemByName", StringComparison.OrdinalIgnoreCase));
 
@@ -535,13 +535,13 @@ public class {{safeTypeName}}{{inheritance}} {
             }
 
             string methodHidingKey = $"{methodIdentifier}({string.Join(", ", declParamTypes)})";
-            string newMod = GetMethodNewModifier(methodIdentifier, fn.Name, methodHidingKey, isAdobeCollection, adobeObjectsSignatures);
+            string newMod = GetMethodNewModifier(methodIdentifier, fn.Name, methodHidingKey, collectionType, adobeObjectsSignatures);
             string signatureWithoutNew = $"{methodDeclRet} {methodIdentifier}({string.Join(", ", declParams)})";
             string signature = $"{newMod}{signatureWithoutNew}";
             string lateArgsStrWithComma = passParamsLate.Count > 0 ? ", " + string.Join(", ", passParamsLate) : "";
 
             if (emittedWrapperMethodSignatures.Add(signatureWithoutNew)) {
-                if (isAdobeObjects) {
+                if (collectionType == CollectionType.rawAdobe) {
                     _emittedAdobeObjectsMethodNames.Add(methodIdentifier);
                     _emittedAdobeObjectsMethodSignatures.Add(methodHidingKey);
                 }
@@ -578,11 +578,11 @@ public class {{safeTypeName}}{{inheritance}} {
             }
         }
 
-        if (isAdobeObjects)
+        if (collectionType == CollectionType.rawAdobe)
             _hasEmittedAdobeObjectsMembers = true;
 
         AppendLine(/*lang=c#*/ $$"""
-        {{(isObjects && !isAdobeObjects ? /*lang=c#*/"""
+        {{(collectionType == CollectionType.raw ? /*lang=c#*/"""
             public global::System.Collections.Generic.IEnumerator<ComProxy> GetEnumerator()
             {
                 for (int i = 1; i <= Count; i++) {
@@ -599,13 +599,13 @@ public class {{safeTypeName}}{{inheritance}} {
     private string GetPropertyNewModifier(
         string propIdentifier,
         string rawPropName,
-        bool isAdobeCollection,
+        CollectionType collectionType,
         AdobeObjectsMemberSignatures? adobeObjectsSignatures) {
         if (ComProxyPropertyNames.Contains(propIdentifier) ||
             ComProxyMethodNames.Contains(propIdentifier))
             return "new ";
 
-        if (!isAdobeCollection)
+        if (collectionType != CollectionType.typedAdobe)
             return "";
 
         if (adobeObjectsSignatures is not null &&
@@ -628,13 +628,13 @@ public class {{safeTypeName}}{{inheritance}} {
         string methodIdentifier,
         string rawMethodName,
         string methodHidingKey,
-        bool isAdobeCollection,
+        CollectionType collectionType,
         AdobeObjectsMemberSignatures? adobeObjectsSignatures) {
         if (ComProxyPropertyNames.Contains(methodIdentifier) ||
             ComProxyMethodSignatures.Contains(methodHidingKey))
             return "new ";
 
-        if (!isAdobeCollection)
+        if (collectionType != CollectionType.typedAdobe)
             return "";
 
         if (adobeObjectsSignatures is not null) {

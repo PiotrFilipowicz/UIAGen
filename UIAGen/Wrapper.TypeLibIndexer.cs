@@ -93,7 +93,7 @@ public partial class UiaAdapterWrapper {
         foreach (var (baseName, typeInfo) in uniqueTypeInfos) {
             GenerateStrongWrapper(baseName, typeInfo, appendWrappers);
         }
-        if (IsAdobeAdapter)
+        if (HasAdobeObjectsModel)
             AppendAdobeObjectsTypes(appendWrappers, uniqueTypeInfos.ContainsKey("Objects"));
     }
 
@@ -163,7 +163,7 @@ namespace {{targetNamespace}} {
         DiscoveredObjectsMembers.Add("MiddleItem");
         DiscoveredObjectsMembers.Add("PreviousItem");
         DiscoveredObjectsMembers.Add("NextItem");
-       
+
         DiscoveredObjectsMembers.Add("AnyItem");
         DiscoveredObjectsMembers.Add("ItemByID");
         DiscoveredObjectsMembers.Add("ItemByRange");
@@ -227,7 +227,7 @@ namespace {{targetNamespace}} {
         }
 
         InspectTypeInfo(typeInfo, attr, 0);
-        return seenSignatureMethods.Count == AdobeObjectsSignatureMethods.Count;
+        return seenSignatureMethods.Count >= 6;
     }
 
     private static bool IsTypeInfoCollection(ITypeInfo typeInfo, TYPEATTR attr) {

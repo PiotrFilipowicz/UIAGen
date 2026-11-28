@@ -620,7 +620,7 @@ namespace UiaAdapter.TemplateSyntax {
     internal static class VariantDebuggerDisplay {
         internal static string FormatValue(object value) {
             if (value is string text)
-                return $"{text}";
+                return $"\"{text}\"";
             if (value is char character)
                 return $"'{character}'";
             if (value is float fNumber)
@@ -738,6 +738,8 @@ namespace UiaAdapter.TemplateSyntax {
         internal static object[] CreateGeneratedPropertyNodes(ComProxy target) {
             if (target == null || target.IsMissing || target.ComPointer == IntPtr.Zero)
                 return Array.Empty<object>();
+            if (IsEmptyCollection(target, forceLateInvoke: false, out _))
+                return Array.Empty<object>();
 
             ComGeneratedMember[] members = target.GetDebuggerProperties();
             Array.Sort(members, (left, right) => global::System.StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name));
@@ -750,6 +752,35 @@ namespace UiaAdapter.TemplateSyntax {
                     : node;
             }
             return nodes;
+        }
+
+        internal static bool IsEmptyCollection(ComProxy target, bool forceLateInvoke, out int count) {
+            count = 0;
+            if (!(target is ComProxies collection) || collection.IsMissing || collection.ComPointer == IntPtr.Zero)
+                return false;
+
+            try {
+                if (forceLateInvoke) {
+                    if (collection.ComBehavior == null)
+                        return false;
+                    object rawCount = ComInvoker.GetDynamicValue(
+                        collection,
+                        "Count",
+                        collection.ComBehavior.InvocationMode,
+                        forceLateInvoke: true,
+                        knownDispId: -1,
+                        typeKey: string.Empty);
+                    count = global::System.Convert.ToInt32(rawCount, global::System.Globalization.CultureInfo.InvariantCulture);
+                }
+                else {
+                    count = collection.Count;
+                }
+
+                return count <= 0;
+            }
+            catch {
+                return false;
+            }
         }
     }
 
@@ -896,6 +927,9 @@ namespace UiaAdapter.TemplateSyntax {
                 var target = _tree.Target;
                 if (target == null || target.IsMissing || target.ComPointer == IntPtr.Zero)
                     return Array.Empty<object>();
+
+                if (ComProxyDebugView.IsEmptyCollection(target, forceLateInvoke: true, out int count))
+                    return new object[] {new ComScalarPropertyNode("Count", CollectionDebuggerDisplay.FormatCount(count), "int")};
 
                 try {
                     string[] names = target.GetDebuggerMemberNames();

@@ -26,7 +26,7 @@ public partial class UiaAdapterWrapper {
 
     internal static StringBuilder BuildSharedInfrastructure(string rootNamespace, IReadOnlyList<UiaAdapterWrapper> wrappers) {
         StringBuilder sb = CreateSectionBuilder("Infrastructure", rootNamespace, rootNamespace);
-        bool includeSafeAdobeMethods = wrappers.Any(w => w.IsAdobeAdapter);
+        bool includeSafeAdobeMethods = wrappers.Any(w => w.HasAdobeObjectsModel);
         AppendComInvoker(line => sb.AppendLine(line), includeSafeAdobeMethods);
         return sb;
     }
@@ -44,7 +44,7 @@ public partial class UiaAdapterWrapper {
     }
 
     private static void AppendBaseInfrastructure(Action<string> append, string rootNamespace, IReadOnlyList<UiaAdapterWrapper> wrappers) {
-        bool includeSafeAdobeMethods = wrappers.Any(w => w.IsAdobeAdapter);
+        bool includeSafeAdobeMethods = wrappers.Any(w => w.HasAdobeObjectsModel);
         AppendComInvoker(append, includeSafeAdobeMethods);
         append(CreateBaseObjectsSource());
         append(CreateTypeMappingsSource(wrappers));

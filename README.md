@@ -1,4 +1,4 @@
-![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.png)
+![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.svg)
 
 [![.NET 11](https://img.shields.io/badge/.NET-11.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
@@ -7,7 +7,7 @@
 [![.NET Standard 2](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![.NET Framework 4.8](https://img.shields.io/badge/.NET-4.8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![OS](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows)](https://microsoft.com/windows)
-[![License](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-LGPLv3%20%2F%20Commercial-blue.svg)](#license--commercial-terms)
 [![NuGet Version](https://img.shields.io/nuget/v/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/UIAGen.svg?style=flat-square&logo=nuget)](https://www.nuget.org/packages/UIAGen)
 [![GitHub Release](https://img.shields.io/github/v/release/PiotrFilipowicz/UIAGen?style=flat-square&logo=github)](https://github.com/PiotrFilipowicz/UIAGen/releases)
@@ -225,6 +225,8 @@ QuickWatch Window in PIA
 
 Size of Adobe UIA Adapter of 41 libraries is 4.73 MB
 Size of AutoCAD UIA Adapter of 22 libraries is 2.26 MB
+
+Tests and benchmarks are presented in [UIATests](https://raw.githubusercontent.com/PiotrFilipowicz/UIATests)
 
 ---
 

@@ -122,12 +122,6 @@ public partial class UiaAdapterWrapper {
 
     internal bool HasAdobeObjectsModel { get; private set; }
 
-    internal bool IsAdobeAdapter =>
-        HasAdobeObjectsModel ||
-        AdapterClassName.Equals("AdobeAdapter", StringComparison.OrdinalIgnoreCase) ||
-        AdapterClassName.EndsWith(".InDesign", StringComparison.OrdinalIgnoreCase) ||
-        AdapterClassName.EndsWith(".InCopy", StringComparison.OrdinalIgnoreCase);
-
     private bool MatchesAppKey(string appKey) {
         if (AdapterClassName.Contains(appKey, StringComparison.OrdinalIgnoreCase))
             return true;
