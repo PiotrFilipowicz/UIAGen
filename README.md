@@ -1,4 +1,4 @@
-![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.svg)
+![Universal Interop Assembly Banner](https://raw.githubusercontent.com/PiotrFilipowicz/UIAGen/main/Assets/Banner.png)
 
 [![.NET 11](https://img.shields.io/badge/.NET-11.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
@@ -226,7 +226,7 @@ QuickWatch Window in PIA
 Size of Adobe UIA Adapter of 41 libraries is 4.73 MB
 Size of AutoCAD UIA Adapter of 22 libraries is 2.26 MB
 
-Tests and benchmarks are presented in [UIATests](https://raw.githubusercontent.com/PiotrFilipowicz/UIATests)
+Tests and benchmarks are presented in the project [UIATests](https://github.com/PiotrFilipowicz/UIATests)
 
 ---
 
